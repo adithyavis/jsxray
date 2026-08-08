@@ -45,7 +45,7 @@ design system audit + LLMs consuming
 | # | Job | Answered by |
 |---|---|---|
 | J1 | "Show me every screen in this app" | `screens`, captured during a crawl |
-| J2 | "How do I get from A to B?" | `edges` — navigation, static and runtime-confirmed |
+| J2 | "How do I get from A to B?" | `edges` — navigation, runtime-confirmed |
 | J3 | "What does an admin see here that a normal user doesn't?" | per-persona variants + conditional guards |
 | J4 | "Which design-system primitives does this screen use?" | per-screen component tree, design-system marks |
 | J5 | "What does this rectangle on screen correspond to in source?" | `boxes` — rect → component → source location |
@@ -145,8 +145,7 @@ styling.
 ### 7.2 The honesty rule
 
 **The canvas never shows invented data.** Where a fact does not exist yet, the
-canvas either shows a clearly-derived stand-in (the wireframe, drawn from real
-parsed structure) or says plainly that the stage has not run. A disabled
+canvas says plainly that the stage has not run. A disabled
 persona selector is correct; a fabricated one is not.
 
 ## 8. Safety, privacy, determinism
