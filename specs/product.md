@@ -124,7 +124,7 @@ styling.
 | **Eyebrow** | Section label above the frame, small uppercase, letterspaced. Sourced from the router's own grouping (a Next route group), falling back to the parent path segment. |
 | **Title** | Human-readable screen name. |
 | **Edge** | Curved, single arrowed. labelled with the interaction causing the transition, Only one edge even if when several links share a pair. Drawn only when a link is established during runtime |
-| **Layout** | Left-to-right by flow order, auto-laid-out. It should be clean with no two edges crossing each other ideally. |
+| **Layout** | Left-to-right by flow order, auto-laid-out. Different variations of the same screen (for eg, settings screen can have a different modals showing) should be ordered top to bottom, center aligned. It should be clean with no two edges crossing each other ideally. |
 | **Chrome** | Dark ground, dot grid static regardless of zoom, vertical brand rail, square zoom controls bottom-left. |
 
 ![clean ordering](./clean_ordering.png)

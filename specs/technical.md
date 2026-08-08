@@ -128,7 +128,7 @@ depends on it.
 3. **Screen id = canonical route**, suffixed when something else shares that route: `/#not-found`,
    `/api/health#route-handler`, `#intercepted`. Without this, `not-found.tsx` at the router root
    shadows `/`.
-4. **Sub-states** with no route of their own (modals, success steps) get a **state signature**.
+4. **Sub-states** — overlays over a route (modals, sheets, drawers) — get a **state signature**.
 
 Pattern matching prefers literal segments over dynamic ones, and longer patterns over shorter —
 `/tx/new` wins over `/tx/:id`.
@@ -139,18 +139,32 @@ router — React Navigation's `navigation.navigate('Details')` — it is the nav
 `Root/Tabs/Details`. Nothing downstream cares which: dedup, coverage, and the canvas need the
 identity to be stable and comparable, not to be a URL.
 
-### 3.1 The state signature
+### 3.1 The state signature — sub-states are overlays
 
-Canonical route + hash of a **structural fingerprint of the rendered accessibility tree**: the
-ordered roles, tag skeleton, and accessible names of landmarks and interactive elements.
+A sub-state is an **overlay over the page**: modal, bottom sheet, drawer, popover, alert. Anything
+else that moves — a list gaining rows, an accordion, a tab — is the same screen and gets no node.
 
-Text content is deliberately excluded. A signature over rendered text would fork `/inbox` into a
-new state every time a message arrived; a signature over structure forks it when a dialog opens,
-which is the distinction that matters.
+```
+stateSignature = canonicalRoute                        // base state
+               = canonicalRoute + '#' + overlayName    // one per overlay above it
+```
 
-This replaces the obvious alternative — canonical route plus a hash of the static component tree.
-There is no component tree in v1, and runtime structure is better evidence regardless: it
-describes what the persona actually saw.
+**Detection**, from the accessibility tree, in order: role `dialog`/`alertdialog` or `aria-modal`
+(where React Native's `Modal` also lands) · a native `<dialog open>` or open popover · the rest of
+the page marked `aria-hidden`/`inert`, which is how Radix, Headless UI, and MUI signal a modal
+when the role is missing.
+
+**Identity is the overlay's accessible name**, slugified — `/settings#confirm-deletion`. Readable,
+stable across runs, and a node title for free. An unnamed overlay falls back to a hash of its own
+subtree, never the page's.
+
+The narrowness is the point. A hash of the whole page forks `/inbox` every time a message arrives,
+because twelve rows and thirteen are different structures — excluding *text* does not fix that.
+Scoping to overlays lets page data churn freely, hashes less, and degrades quietly: an overlay
+with no role, no name, and no inert background is simply not a node.
+
+A static component tree could not do this job at any scope, which is the real reason it is not
+used: `/settings` is one source file whether the modal is open or shut.
 
 ## 4. Provider axes
 
@@ -162,14 +176,15 @@ Selection is by `supports` then `priority`.
 |---|---|---|---|
 | **Parser** | `parse(files, recognizers) → {components, navIntents, fileExports}` | `react` | `vue`; `buildTree()` |
 | **Router** | `enumerate() → {screens, edges}`, `recognizers`, `navEdges(screens, intents)` | `next` (app + pages), `tanstack-router`, `react-router` (file mode) | `expo-router`, `vue-router`, `react-navigation`, `react-router` (code mode) |
-| **Renderer** | `goto(target) · settle · fingerprint · screenshot · clickables · forms · tap · fill · freeze · session` | `playwright` | `native` — Appium or Maestro (§4.4); `elementBoxes` |
+| **Renderer** | `goto(target) · settle · fingerprint · overlays · screenshot · clickables · forms · tap · fill · freeze · session` | `playwright` | `native` — Appium or Maestro (§4.4); `elementBoxes` |
 | **Auth** | `login(session, credentials)`, `isLoggedIn?` | `username-password` | firebase / amplify / jwt |
 
 **Renderer is one interface for both web and native** so crawl logic stays target-agnostic.
 Three members exist specifically for the crawl and are worth naming:
 
 - `settle()` — wait for navigation, network idle, and animation completion to converge.
-- `fingerprint()` — the structural accessibility digest §3.1 hashes.
+- `overlays()` — modals, sheets, and drawers above the page; what identity is built from (§3.1).
+- `fingerprint()` — a broad page digest. Not identity: it answers "did anything happen" (§7.2).
 - `forms()` — form controls with `type`, `name`, `label`, `autocomplete`, `required`, and the
   submit control, which is what §7.3 synthesizes against.
 
@@ -381,6 +396,15 @@ for each persona P:
       reEstablish(state)
 ```
 
+box = node = framed screenshot
+```
+  ┌──────────┐        ┌──────────┐
+  │ [screen- │  tap   │ [screen- │
+  │  shot]   │───────▶│  shot]   │
+  └──────────┘        └──────────┘
+     Login              Dashboard
+```
+
 ### 7.1 Two ways to reach a state; only one makes an edge
 
 A direct `goto` of a declared route yields a **node**. Only a traversed interaction yields an
@@ -389,13 +413,20 @@ without inventing a transition nobody performed.
 
 ### 7.2 Observing the result of an action
 
-After `settle()`, compare `(url, fingerprint)` against the values captured before:
+Two questions, two signals — answering both with one is how a multi-step form stops being walked.
+`overlays()` decides identity; `fingerprint()` only decides whether anything happened at all.
+
+After `settle()`:
 
 | Change | Meaning |
 |---|---|
 | URL changed | a new screen — canonicalize, dedup by screen id |
-| URL same, fingerprint changed | a sub-state — dedup by state signature (§3.1) |
-| Neither changed | a dead action — recorded once so the planner does not retry it, no edge |
+| URL same, overlays changed | a sub-state (§3.1) |
+| URL same, overlays same, fingerprint changed | the page moved but made no node — a list grew, a tab switched, a wizard advanced. **Not dead**: the crawl carries on, same node |
+| nothing changed | a dead action — recorded once, no edge, not retried |
+
+The third row is why `fingerprint()` survives §3.1's narrowing: a form advancing a step has
+plainly done something, and scoring it dead would abandon the flow one step in.
 
 ### 7.3 Forms
 
