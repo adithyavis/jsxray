@@ -42,7 +42,7 @@ is coverage's denominator, not the ability to walk the app.
 | Package | Owns | Scope |
 |---|---|---|
 | `@jsxray/core` | schema, config, pipeline, `detect`, route identity, safety guard, the four provider interfaces | v1 |
-| `@jsxray/providers` | every provider, one directory each: `parser/react`, `router/next`, `router/tanstack`, `router/react-router`, `auth/userpass`, `renderer/playwright` — in v2 `parser/vue`, `router/expo`, `renderer/native` | v1 |
+| `@jsxray/providers` | every provider, one directory each, **named for its provider id**: `parser/react`, `router/next`, `router/tanstack-router`, `router/react-router`, `auth/username-password`, `renderer/playwright` — in v2 `parser/vue`, `router/expo-router`, `renderer/native` | v1 |
 | `@jsxray/viewer` | the canvas (Vite + React + React Flow) | v1 |
 | `jsxray` (cli) | `run` / `view` / `init`, provider registry, static server | v1 |
 
@@ -87,7 +87,9 @@ typechecked separately (Vite does not typecheck).
 | Field | Written by | Meaning | Scope |
 |---|---|---|---|
 | `framework` | detect | stack profile — a matrix, with `evidence` | v1 |
-| `components` | parse | page components: id, name, file, source location | v1 |
+| `providers` | pipeline | which provider served each of the four axes | v1 |
+| `components` | parse | id, name, file, source location; `isPage` marks the ones a router can mount | v1 |
+| `navIntents` | parse | source facts in the author's terms, before the router turns them into edges (§4.1) | v1 |
 | `components[].renders/guards/props` | parse | the full component graph | v2 |
 | `screens` | enumerate + parse | route facts, root component, layouts | v1 |
 | `screens[].tree/layoutTrees` | parse | static component trees | v2 |
@@ -707,6 +709,7 @@ v1, not v2 detail — resolution is what makes "which component does this route 
 | `@acme/ui`, `@acme/ui/button` | **workspace package** — resolve into its source dir, preferring `source`/`publishConfig.source` over `main`/`module` (which point at build output that may not exist) |
 | `@/components/x` | tsconfig `paths`, longest pattern first |
 | `components/layout/nav` | **`baseUrl` fallback** — TypeScript resolves bare specifiers against `baseUrl`; lowest priority |
+| `./x.js` resolving to `x.tsx` | **the NodeNext convention** — TypeScript ESM imports carry a `.js` extension that never exists on disk. Without this, `export { default } from './page.js'` resolves to nothing and the screen has no component |
 | `react`, `@mui/material` | left unresolved on purpose — "came from `@mui/material`" is more useful than a path into `node_modules` |
 
 `tsconfig.json` is **JSONC parsed with a real scanner**, not regexes. Its own data is full of
@@ -844,10 +847,8 @@ it. Rules, all of them learned the hard way:
 | Canvas (`viewer`) | the graph is non-empty, positioned, non-overlapping, correctly labelled; empty states render where captures are missing |
 | Smoke (`scripts/smoke.mjs`) | real cloned repos — resolution rate, screens found, warnings, wall time |
 
-The runtime layer is the new one, and it needs a fixture that actually boots. `fixtures/next-app`
-gains a login screen, a multi-step form, and a role-gated screen, built and served as a static
-export with cookie-based mock auth — so crawl, login, and form synthesis are testable without a
-backend or a long-running dev server.
+The runtime layer needs a fixture that actually boots, and that is a **different fixture from the
+static one**.
 
 Tests run against `src` via vitest aliases, never `dist`. Fixtures prove the shapes we thought of;
 the smoke harness finds the ones we did not — every item in §17.2 came from it.
@@ -899,6 +900,9 @@ history — the consequence column is why.
 | Negate ternary / `\|\|` guards | both branches read as the same condition |
 | Keep node data fields out of the index signature | `Omit` silently typed them away, and Vite did not typecheck |
 | Open the stream before writing headers | deleting `jsxray.json` crashed the server → blank canvas |
+| Resolve a `.js` specifier to its `.ts`/`.tsx` source | `export { default } from './page.js'` resolved to nothing, so those screens had no component |
+| Split identifiers on camelCase before matching field names | `name="cardNumber"` with no label slipped past the payment refusal; `\bcard\b` does not match inside `cardNumber` |
+| The renderer resolves a control's kind in the page, not from an attribute | filling a `<select>` with `fill()` throws, and the whole form traversal dies one field in |
 
 ## 18. Known limits
 
