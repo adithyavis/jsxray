@@ -10,31 +10,20 @@
     "node": ">=20.11"
   },
   "scripts": {
-    "build": "tsc -b packages/core packages/parser-react packages/router-next packages/cli && npm --workspace @jsxray/viewer run build && npm --workspace @jsxray/viewer run build:single",
-    "clean": "tsc -b --clean packages/core packages/parser-react packages/router-next packages/cli",
-    "typecheck": "tsc -b --pretty packages/core packages/parser-react packages/router-next packages/cli && tsc -p packages/viewer/tsconfig.json --noEmit",
+    "build": "tsc -b packages/core packages/providers packages/cli && npm --workspace @jsxray/viewer run build && npm --workspace @jsxray/viewer run build:single",
+    "clean": "tsc -b --clean packages/core packages/providers packages/cli",
+    "typecheck": "tsc -b --pretty packages/core packages/providers packages/cli && tsc -p packages/viewer/tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-
-    "link": "npm link -w jsxray && node scripts/rehash.mjs",
-    "unlink": "npm rm -g jsxray && node scripts/rehash.mjs",
-
-    "demo": "npm run build && npm run demo:run && npm run demo:view",
-    "demo:run": "cd fixtures/next-app && node ../../packages/cli/dist/bin.js run",
-    "demo:view": "cd fixtures/next-app && node ../../packages/cli/dist/bin.js view",
-    "demo:export": "cd fixtures/next-app && node ../../packages/cli/dist/bin.js view --export ../../atlas.html",
-    "demo:monorepo": "cd fixtures/monorepo && node ../../packages/cli/dist/bin.js run && node ../../packages/cli/dist/bin.js view",
-
-    "dev:viewer": "npm run demo:run && node scripts/viewer-fixture.mjs && npm -w @jsxray/viewer run dev",
-
+    "jsxray": "tsx packages/cli/src/bin.ts",
     "smoke": "node scripts/smoke.mjs",
-    "smoke:clone": "node scripts/smoke.mjs --clone",
-    "jsxray": "tsx packages/cli/src/bin.ts"
+    "smoke:clone": "node scripts/smoke.mjs --clone"
   },
   "devDependencies": {
-    "@types/node": "^22.10.2",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "@types/node": "^26.2.0",
+    "playwright": "^1.62.1",
+    "tsx": "^4.20.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   }
 }
