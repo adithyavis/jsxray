@@ -1,0 +1,40 @@
+{
+  "name": "jsxray-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "tsc -b packages/core packages/parser-react packages/router-next packages/cli && npm --workspace @jsxray/viewer run build && npm --workspace @jsxray/viewer run build:single",
+    "clean": "tsc -b --clean packages/core packages/parser-react packages/router-next packages/cli",
+    "typecheck": "tsc -b --pretty packages/core packages/parser-react packages/router-next packages/cli && tsc -p packages/viewer/tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+
+    "link": "npm link -w jsxray && node scripts/rehash.mjs",
+    "unlink": "npm rm -g jsxray && node scripts/rehash.mjs",
+
+    "demo": "npm run build && npm run demo:run && npm run demo:view",
+    "demo:run": "cd fixtures/next-app && node ../../packages/cli/dist/bin.js run",
+    "demo:view": "cd fixtures/next-app && node ../../packages/cli/dist/bin.js view",
+    "demo:export": "cd fixtures/next-app && node ../../packages/cli/dist/bin.js view --export ../../atlas.html",
+    "demo:monorepo": "cd fixtures/monorepo && node ../../packages/cli/dist/bin.js run && node ../../packages/cli/dist/bin.js view",
+
+    "dev:viewer": "npm run demo:run && node scripts/viewer-fixture.mjs && npm -w @jsxray/viewer run dev",
+
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:clone": "node scripts/smoke.mjs --clone",
+    "jsxray": "tsx packages/cli/src/bin.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
