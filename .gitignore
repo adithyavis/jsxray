@@ -1,0 +1,16 @@
+node_modules/
+dist/
+
+# Real-world repos cloned for manual smoke-testing. Never committed.
+.sandbox/
+
+*.tsbuildinfo
+.jsxray/
+jsxray.json
+.DS_Store
+.env
+.env.*
+!.env.example
+dist-single/
+packages/viewer/public/
+atlas.html
