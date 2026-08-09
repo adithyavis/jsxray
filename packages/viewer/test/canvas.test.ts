@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { JsxrayDocument, ScreenState } from '@jsxray/core';
 import { eyebrowOf, titleOf } from '../src/document.js';
-import { FRAME_SIZE, buildGraph } from '../src/graph.js';
+import { FRAME_SIZE, buildGraph, findHiddenLinks } from '../src/graph.js';
 import { layoutGraph } from '../src/layout.js';
 
 const state = (
@@ -164,3 +164,121 @@ function overlaps(a: { position: { x: number; y: number }; width?: number; heigh
     a.position.y + ah > b.position.y
   );
 }
+
+describe('cycles', () => {
+  const cyclic = {
+    ...document,
+    states: [state('/', 'user', true), state('/settings', 'user', true)],
+    edges: [
+      {
+        id: 'c1',
+        discoveredBy: 'runtime',
+        kind: 'action',
+        from: '/',
+        to: '/settings',
+        fromState: '/',
+        toState: '/settings',
+        label: 'Settings',
+        personaId: 'user',
+        matchKey: '/ /settings',
+      },
+      {
+        id: 'c2',
+        discoveredBy: 'runtime',
+        kind: 'action',
+        from: '/settings',
+        to: '/',
+        fromState: '/settings',
+        toState: '/',
+        label: 'Home',
+        personaId: 'user',
+        matchKey: '/settings /',
+      },
+    ],
+  } as unknown as JsxrayDocument;
+
+  it('does not draw the link back to a screen already visited', () => {
+    const graph = buildGraph({ document: cyclic, personaId: 'user', frame: 'browser' });
+    expect(graph.edges.map((edge) => edge.id)).toEqual(['/->/settings']);
+    expect(graph.hiddenLinks).toBe(1);
+  });
+
+  it('lays a cyclic graph out without hanging or overlapping', async () => {
+    const { nodes, edges } = buildGraph({ document: cyclic, personaId: 'user', frame: 'browser' });
+    const laid = await layoutGraph(nodes, edges);
+    expect(laid).toHaveLength(2);
+    for (const node of laid) {
+      expect(Number.isFinite(node.position.x)).toBe(true);
+      expect(Number.isFinite(node.position.y)).toBe(true);
+    }
+    expect(overlaps(laid[0]!, laid[1]!)).toBe(false);
+  });
+
+  it('drops a self-loop rather than drawing it', async () => {
+    const selfLoop = {
+      ...cyclic,
+      states: [state('/', 'user', true)],
+      edges: [
+        {
+          id: 's1',
+          discoveredBy: 'runtime',
+          kind: 'action',
+          from: '/',
+          to: '/',
+          fromState: '/',
+          toState: '/',
+          label: 'Refresh',
+          personaId: 'user',
+          matchKey: '/ /',
+        },
+      ],
+    } as unknown as JsxrayDocument;
+    const graph = buildGraph({ document: selfLoop, personaId: 'user', frame: 'browser' });
+    expect(graph.edges).toHaveLength(0);
+    expect(graph.hiddenLinks).toBe(1);
+    const laid = await layoutGraph(graph.nodes, graph.edges);
+    expect(laid).toHaveLength(1);
+    expect(Number.isFinite(laid[0]!.position.x)).toBe(true);
+  });
+});
+
+describe('findHiddenLinks', () => {
+  it('draws the short way in, not the long one', () => {
+    const hidden = findHiddenLinks([
+      '/->/welcome',
+      '/welcome->/dashboard',
+      '/->/dashboard',
+    ]);
+    expect([...hidden]).toEqual(['/welcome->/dashboard']);
+  });
+
+  it('gives every screen exactly one line in', () => {
+    const pairs = ['/->/a', '/->/b', '/a->/c', '/b->/c', '/c->/a'];
+    const hidden = findHiddenLinks(pairs);
+    const drawn = pairs.filter((pair) => !hidden.has(pair));
+    const targets = drawn.map((pair) => pair.split('->')[1]);
+    expect(new Set(targets).size).toBe(targets.length);
+  });
+
+  it('drops the long way back in Home -> Settings -> Profile -> Home', () => {
+    const hidden = findHiddenLinks(['/->/settings', '/settings->/profile', '/profile->/']);
+    expect([...hidden]).toEqual(['/profile->/']);
+  });
+
+  it('drops every menu link back to home', () => {
+    const hidden = findHiddenLinks(['/->/a', '/a->/b', '/b->/c', '/a->/', '/b->/', '/c->/']);
+    expect(hidden.size).toBe(3);
+  });
+
+  it('still reaches screens in a loop that has no way in', () => {
+    const pairs = ['/a->/b', '/b->/a'];
+    const hidden = findHiddenLinks(pairs);
+    expect(hidden.size).toBe(1);
+    expect([...hidden]).toEqual(['/b->/a']);
+  });
+
+  it('draws separate islands', () => {
+    const hidden = findHiddenLinks(['/a->/b', '/x->/y']);
+    expect(hidden.size).toBe(0);
+  });
+});

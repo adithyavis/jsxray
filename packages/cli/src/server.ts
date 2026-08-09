@@ -68,7 +68,17 @@ async function handle(
       response.end('forbidden');
       return;
     }
-    await sendFile(response, file);
+    
+    if (await isReadableFile(file)) {
+      await sendFile(response, file);
+      return;
+    }
+    const bundled = safeJoin(options.viewerDir, requestPath.replace(/^\//, ''));
+    if (bundled && (await isReadableFile(bundled))) {
+      await sendFile(response, bundled);
+      return;
+    }
+    await sendFile(response, file); // reports the capture miss as 404
     return;
   }
 

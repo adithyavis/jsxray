@@ -29,7 +29,14 @@ export interface GraphInput {
   frame: FrameKind;
 }
 
-export function buildGraph(input: GraphInput): { nodes: Node[]; edges: Edge[] } {
+export interface Graph {
+  nodes: Node[];
+  edges: Edge[];
+  /** Traversals that are real but not drawn (see findHiddenLinks). */
+  hiddenLinks: number;
+}
+
+export function buildGraph(input: GraphInput): Graph {
   const { document, personaId, frame } = input;
 
   const bySignature = new Map<string, ScreenState[]>();
@@ -50,20 +57,33 @@ export function buildGraph(input: GraphInput): { nodes: Node[]; edges: Edge[] } 
 
   const inbound = new Map<string, number>();
   const outbound = new Map<string, number>();
-  const seenPairs = new Set<string>();
-  const edges: Edge[] = [];
+  const labelsByPair = new Map<string, string[]>();
+  const order: string[] = [];
 
   for (const edge of runtimeEdges) {
     const pair = `${edge.fromState}->${edge.toState}`;
     outbound.set(edge.fromState!, (outbound.get(edge.fromState!) ?? 0) + 1);
     inbound.set(edge.toState!, (inbound.get(edge.toState!) ?? 0) + 1);
-    if (seenPairs.has(pair)) continue;
-    seenPairs.add(pair);
+    if (!labelsByPair.has(pair)) {
+      labelsByPair.set(pair, []);
+      order.push(pair);
+    }
+    const label = edge.label ?? edge.kind;
+    const labels = labelsByPair.get(pair)!;
+    if (label && !labels.includes(label)) labels.push(label);
+  }
+
+  const hiddenLinks = findHiddenLinks(order);
+  const edges: Edge[] = [];
+
+  for (const pair of order) {
+    if (hiddenLinks.has(pair)) continue;
+    const [source, target] = splitPair(pair);
     edges.push({
       id: pair,
-      source: edge.fromState!,
-      target: edge.toState!,
-      label: edge.label ?? edge.kind,
+      source,
+      target,
+      label: labelsByPair.get(pair)!.join(' · '),
       type: 'default',
       animated: false,
       markerEnd: { type: 'arrowclosed', width: 14, height: 14, color: '#7d8698' } as Edge['markerEnd'],
@@ -99,5 +119,60 @@ export function buildGraph(input: GraphInput): { nodes: Node[]; edges: Edge[] } 
     };
   });
 
-  return { nodes, edges };
+  return { nodes, edges, hiddenLinks: hiddenLinks.size };
+}
+
+function splitPair(pair: string): [string, string] {
+  const at = pair.indexOf('->');
+  return [pair.slice(0, at), pair.slice(at + 2)];
+}
+
+export function findHiddenLinks(pairs: readonly string[]): Set<string> {
+  const outgoing = new Map<string, string[]>();
+  const nodes: string[] = [];
+  const seenNode = new Set<string>();
+  const hasIncoming = new Set<string>();
+
+  for (const pair of pairs) {
+    const [source, target] = splitPair(pair);
+    outgoing.set(source, [...(outgoing.get(source) ?? []), pair]);
+    hasIncoming.add(target);
+    for (const node of [source, target]) {
+      if (seenNode.has(node)) continue;
+      seenNode.add(node);
+      nodes.push(node);
+    }
+  }
+
+  const kept = new Set<string>();
+  const visited = new Set<string>();
+  const queue: string[] = [];
+  const enqueue = (node: string): void => {
+    if (visited.has(node)) return;
+    visited.add(node);
+    queue.push(node);
+  };
+
+  for (const node of nodes) {
+    if (!hasIncoming.has(node)) enqueue(node);
+  }
+
+  let head = 0;
+  for (;;) {
+    while (head < queue.length) {
+      const node = queue[head++]!;
+      for (const pair of outgoing.get(node) ?? []) {
+        const [, target] = splitPair(pair);
+        if (visited.has(target)) continue;
+        enqueue(target);
+        kept.add(pair);
+      }
+    }
+    // A cycle with no way in, or a separate island, still needs a starting point.
+    const orphan = nodes.find((node) => !visited.has(node));
+    if (orphan === undefined) break;
+    enqueue(orphan);
+  }
+
+  return new Set(pairs.filter((pair) => !kept.has(pair)));
 }

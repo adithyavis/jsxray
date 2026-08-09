@@ -11,6 +11,7 @@ export default defineConfig(({ mode }) => {
       outDir: single ? 'dist-single' : 'dist',
       emptyOutDir: true,
       target: 'es2022',
+      assetsDir: '_viewer',
     },
   };
 });

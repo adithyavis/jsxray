@@ -111,6 +111,9 @@ function Canvas({ document }: { document: JsxrayDocument }): ReactElement {
           </button>
 
           <span className="toolbar-spacer" />
+          {graph.hiddenLinks ? (
+            <span className="muted">{graph.hiddenLinks} other links not drawn</span>
+          ) : null}
           <Coverage document={document} />
         </header>
 
