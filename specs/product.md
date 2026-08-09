@@ -125,6 +125,7 @@ styling.
 | **Eyebrow** | Section label above the frame, small uppercase, letterspaced. Sourced from the router's own grouping (a Next route group), falling back to the parent path segment. |
 | **Title** | Human-readable screen name; for a modal state, the modal's own name. |
 | **Edge** | Curved, single arrowed. labelled with the interaction causing the transition, Only one edge even if when several links share a pair. Drawn only when a link is established during runtime |
+| **One line in** | Each screen shows **one** incoming line: the shortest way to reach it. If the map holds both `Home → Welcome → Dashboard` and `Home → Dashboard`, only `Home → Dashboard` is drawn. Longer ways in, links back to a screen already passed through, and self-loops are not drawn. All of them stay in the document and in the inspector; the toolbar reports how many lines were left out. |
 | **Layout** | A **tree**, growing left to right. Every state is a consequence of the state before it, so depth reads left to right and the states reachable from one node fan out vertically, centred on it. Variants of a screen (settings with different modals open) are simply that node's children — no special case. Ideally no two edges cross; the tree shape is what makes that reachable. |
 | **Chrome** | Dark ground, dot grid static regardless of zoom, vertical brand rail, square zoom controls bottom-left. |
 

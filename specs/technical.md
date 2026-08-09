@@ -778,6 +778,21 @@ from a separate listing in the viewer, not as nodes (product §11.2).
 **Edges** — runtime only (§5); curved, single-arrowed, labelled with the interaction that caused
 the transition. One edge per pair even when several interactions share it.
 
+**One line in per screen — the shortest way there, found breadth-first.** Given both
+`/ → /welcome → /dashboard` and `/ → /dashboard`, the canvas draws only the second: `/dashboard`
+is one hop from `/` and two hops the other way. Everything else — longer ways in, links back to a
+screen already passed through, self-loops — is not drawn.
+
+This is a **presentation** rule, not an analysis one. Every traversal stays in `edges`, the
+inspector lists all confirmed transitions out of a state, and the node caption keeps the true in
+and out counts. Only the lines are thinned, and the toolbar reports how many were omitted, so a
+simplified picture never reads as a complete one (product §7.2).
+
+Ties between equally short paths break on crawl order, which is why discovery order is
+load-bearing here and not only in `considerModelOrder`. The result is a spanning tree by
+construction, which is what finally makes `elk.mrtree` fire: with menu links drawn every screen
+has several parents, and the tree layout never applies.
+
 **Layout** — a **tree layout**, `elkjs` `elk.mrtree` (Reingold–Tilford) with direction `RIGHT`.
 Every state is a consequence of the state before it, so depth reads left to right and siblings
 fan out vertically, centred on their parent:
