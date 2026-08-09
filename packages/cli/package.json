@@ -1,0 +1,18 @@
+{
+  "name": "jsxray",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "jsxray": "./dist/bin.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@jsxray/core": "*",
+    "@jsxray/providers": "*"
+  }
+}
