@@ -31,10 +31,11 @@ and hands the same document to the next. Providers write only through the stage 
 them, and consumers read the finished document and nothing else. The viewer holds no analysis
 logic; if it has to compute something interesting, that computation belongs in a stage.
 
-**The chain is linear, and the two halves are a sequence rather than two tracks.** The runtime
-half cannot start until the static half has produced a route manifest, because that manifest is
-what the crawl walks (§5). Drawing the halves side by side would suggest a static-only run and a
-runtime-only run are both possible; only the first one is.
+**The chain is linear, but the crawl's only hard dependency is `detect`** — which picks the
+renderer and the auth provider. The static half *guides* the runtime half: the route manifest is
+the crawl's checklist and the nav intents are its planner hints (§5). It is not a precondition.
+A crawl seeded from `config.seedRoutes` runs with no router provider at all (§4.3); what it loses
+is coverage's denominator, not the ability to walk the app.
 
 ### Packages
 
@@ -93,7 +94,8 @@ typechecked separately (Vite does not typecheck).
 | `edges` | enumerate + crawl | navigation, `discoveredBy: static \| runtime` | v1 |
 | `personas` | config | declared roles | v1 |
 | `states` | crawl | observed screen states, per persona, with captures and the renderer that produced them | v1 |
-| `coverage` | pipeline | reached ÷ declared and confirmed ÷ candidate, per persona | v1 |
+| `states[].deadActions` | crawl | interactions that changed nothing — recorded once, never retried, never an edge | v1 |
+| `coverage` | pipeline | reached ÷ declared and confirmed ÷ matchable, plus the unmatchable count (§5.1), per persona | v1 |
 | `diagnostics` | all | levelled, stage-tagged, with source locations | v1 |
 | `stages` | pipeline | which stages actually ran | v1 |
 | `boxes` | link | rendered rect → component → source location | v2 |
@@ -103,7 +105,12 @@ not a version bump.
 
 **Invariants**
 
-- Every path is repo-relative with POSIX separators. Absolute paths never appear except `root`.
+- **Two path classes, both relative, both POSIX.** *Source* paths (`file`, `loc`) are
+  repo-relative. *Asset* paths (captures) are **document-relative**, because the document moves
+  with `-o/--out` and its assets move with it. Absolute paths never appear except `root`.
+- **Output layout.** `run` writes `.jsxray/jsxray.json` and captures to `.jsxray/assets/`, so a
+  capture path reads `assets/user/dashboard.png`. `-o/--out` relocates that whole directory; the
+  document is self-contained wherever it lands.
 - Component id = `<repo-relative file>#<name>`. Stable across runs.
 - The document is JSON-serializable with no cycles.
 - Absent data is `null` or `[]` — never a placeholder that looks real.
@@ -125,10 +132,13 @@ depends on it.
 2. **Canonicalize observed URLs** against the declared patterns first (real param names), falling
    back to an id-shape heuristic (numeric, UUID, ObjectId, long opaque) so a crawl can dedup
    routes the static half never declared.
-3. **Screen id = canonical route**, suffixed when something else shares that route: `/#not-found`,
-   `/api/health#route-handler`, `#intercepted`. Without this, `not-found.tsx` at the router root
-   shadows `/`.
-4. **Sub-states** — overlays over a route (modals, sheets, drawers) — get a **state signature**.
+3. **Screen id = canonical route**, suffixed with `#` when something else shares that route:
+   `/#not-found`, `/api/health#route-handler`, `#intercepted`. Without this, `not-found.tsx` at
+   the router root shadows `/`.
+4. **Sub-states** — overlays over a route (modals, sheets, drawers) — get a **state signature**,
+   which uses `$`. The two separators are deliberately different: `#` disambiguates *screens*
+   sharing a route, `$` names *states* over a screen. Sharing one would collide `/` with a
+   "Not Found" modal over it.
 
 Pattern matching prefers literal segments over dynamic ones, and longer patterns over shorter —
 `/tx/new` wins over `/tx/:id`.
@@ -145,8 +155,9 @@ A sub-state is an **overlay over the page**: modal, bottom sheet, drawer, popove
 else that moves — a list gaining rows, an accordion, a tab — is the same screen and gets no node.
 
 ```
-stateSignature = canonicalRoute                        // base state
-               = canonicalRoute + '#' + overlayName    // one per overlay above it
+stateSignature = screenId                              // base state
+               = screenId + '$' + overlayName          // one segment per overlay above it
+               = screenId + '$' + outer + '$' + inner  // stacked, outermost first
 ```
 
 **Detection**, from the accessibility tree, in order: role `dialog`/`alertdialog` or `aria-modal`
@@ -154,9 +165,10 @@ stateSignature = canonicalRoute                        // base state
 the page marked `aria-hidden`/`inert`, which is how Radix, Headless UI, and MUI signal a modal
 when the role is missing.
 
-**Identity is the overlay's accessible name**, slugified — `/settings#confirm-deletion`. Readable,
+**Identity is the overlay's accessible name**, slugified — `/settings$confirm-deletion`. Readable,
 stable across runs, and a node title for free. An unnamed overlay falls back to a hash of its own
-subtree, never the page's.
+subtree, never the page's. Stacked overlays append in stacking order, outermost first:
+`/settings$manage-billing$confirm-deletion`.
 
 The narrowness is the point. A hash of the whole page forks `/inbox` every time a message arrives,
 because twelve rows and thirteen are different structures — excluding *text* does not fix that.
@@ -176,11 +188,12 @@ Selection is by `supports` then `priority`.
 |---|---|---|---|
 | **Parser** | `parse(files, recognizers) → {components, navIntents, fileExports}` | `react` | `vue`; `buildTree()` |
 | **Router** | `enumerate() → {screens, edges}`, `recognizers`, `navEdges(screens, intents)` | `next` (app + pages), `tanstack-router`, `react-router` (file mode) | `expo-router`, `vue-router`, `react-navigation`, `react-router` (code mode) |
-| **Renderer** | `goto(target) · settle · fingerprint · overlays · screenshot · clickables · forms · tap · fill · freeze · session` | `playwright` | `native` — Appium or Maestro (§4.4); `elementBoxes` |
-| **Auth** | `login(session, credentials)`, `isLoggedIn?` | `username-password` | firebase / amplify / jwt |
+| **Renderer** | `launch(baseUrl) → session · goto(target) · settle · fingerprint · overlays · screenshot · clickables · forms · tap · fill · freeze · session` | `playwright` | `native` — Appium or Maestro (§4.4); `elementBoxes` |
+| **Auth** | `login(session, credentials, loginFlow)`, `isLoggedIn?` | `username-password` | firebase / amplify / jwt |
 
 **Renderer is one interface for both web and native** so crawl logic stays target-agnostic.
-Three members exist specifically for the crawl and are worth naming:
+`launch()` opens a session per persona (§7); four more members exist specifically for the crawl
+and are worth naming:
 
 - `settle()` — wait for navigation, network idle, and animation completion to converge.
 - `overlays()` — modals, sheets, and drawers above the page; what identity is built from (§3.1).
@@ -190,6 +203,13 @@ Three members exist specifically for the crawl and are worth naming:
 
 `elementBoxes()` stays on the interface as a v2 member; a provider that cannot produce boxes says
 so through `capabilities` rather than throwing.
+
+**`config.loginFlow` is the auth provider's script, not a parallel mechanism.** The crawl only ever
+calls `auth.login(session, credentials, loginFlow)`; the provider decides what to do with the
+flow. `username-password` replays `loginFlow.steps` verbatim, or synthesizes them from the login
+page's `forms()` when the flow is absent. A future provider (jwt, firebase) may ignore
+`loginFlow` entirely and seed the session directly. **`isLoggedIn` is optional** — a provider that
+cannot cheaply answer it omits it, and the crawl skips the check (§7.6).
 
 **Router discovery is ranked, not binary.** A router declares the strategies it has and tries them
 in order: a **generated** route tree is authoritative and needs no convention-guessing (TanStack
@@ -320,11 +340,34 @@ canvas shows facts (product §7.2).
 
 Two consequences to state now rather than discover later:
 
-- **A static-only run produces nodes and no edges.** That is correct, and it makes the runtime
-  half load-bearing rather than optional.
+- **A static-only run produces a document with candidate edges and a canvas with none.**
+  `enumerate` does write edges; the canvas simply does not draw hypotheses. That is what makes the
+  runtime half load-bearing rather than optional.
 - **Coverage is two ratios, not one**: `screensReached ÷ screensDeclared` and
-  `edgesConfirmed ÷ edgesCandidate`, each overall and per persona. The second is what tells a
+  `edgesConfirmed ÷ edgesMatchable`, each overall and per persona. The second is what tells a
   reader whether the map is thin because the app is thin or because the crawl stalled.
+
+### 5.1 Matching a runtime edge to the candidate it confirms
+
+**The match key is `(sourceScreenId, targetScreenId)`** — canonical screen ids on both ends,
+overlay segments dropped, so `/posts$share` confirms a candidate out of `/posts`. Screen id
+already canonicalizes params (§3), so a candidate `/posts/:id` and a traversal of `/posts/42`
+match. A candidate matching several traversals is confirmed once; the extra traversals are edges
+in their own right.
+
+Many candidates have no target at all (§11.2) and therefore no key. So candidates fall into
+**three** buckets, not two:
+
+| Bucket | Meaning |
+|---|---|
+| `confirmed` | a runtime edge shares its key — the declared link was traversed |
+| `unconfirmed` | it has a key, and no traversal matched it — the crawl did not get there |
+| `unmatchable` | no static target (`<Link href={item.path}>`, a built template) — unknowable without the runtime |
+
+`edgesMatchable = confirmed + unconfirmed`. **Unmatchable candidates are excluded from the
+denominator and reported as their own count**, because scoring them as misses would make a
+CMS-driven app look like a stalled crawl. They still do their real job: telling the planner there
+is a control here worth clicking.
 
 ## 6. Pipeline stages
 
@@ -333,13 +376,19 @@ Each stage is JSON-in → JSON-out: independently testable, resumable, cacheable
 | Stage | Reads | Writes | Failure mode |
 |---|---|---|---|
 | `detect` | package.json, config files, filesystem | `framework` | throws only if there is no package.json |
-| `parse` | source files | `components`, nav intents | per-file diagnostic; the run continues |
+| `parse` | source files, **the router's `recognizers`** (§4.1) | `components`, nav intents | per-file diagnostic; the run continues |
 | `enumerate` | router root, nav intents | `screens`, candidate `edges` | diagnostic naming the detected router and the supported set (§4.3); the run continues without a manifest |
 | `crawl` | running app | `states`, runtime `edges` | diagnostic if no URL, no renderer, or login fails |
 | `link` | rendered elements ↔ source | `boxes` | v2 |
 
 `detect` is mandatory — every later stage selects providers from its output. `--stages` selects a
 subset; `detect` is always prepended.
+
+**Provider selection happens once, at the end of `detect`, for all four axes.** The stage order is
+about who *writes* the document, not who is chosen when: `parse` runs before `enumerate` but needs
+the router's `recognizers` (§4.1), so the router is resolved a stage earlier than the table's
+reading order suggests. When no router applies, `parse` runs with an empty recognizer set and
+yields components but no nav intents — a diagnostic, not a failure.
 
 ### 6.1 Which files get parsed
 
@@ -364,37 +413,55 @@ this same stage in v2, not a new one. The interfaces carry the fields from the s
 
 ## 7. The crawl
 
-The section this spec exists for. Per persona: launch → authenticate → freeze → traverse.
+The section this spec exists for. Per persona: launch → **freeze** → authenticate → traverse.
+Freeze comes before login because login is app code, and on an SPA the app boots once and never
+reloads — a freeze applied after it has already missed the values the app read at module scope
+(§8).
 
 ```
+visit(state) =                                        # one place, so no rule is skippable
+  if match(state.route, ignore.screenshots): state.capture ← null       # privacy
+  else:                                    state.capture ← screenshot()
+  return state
+
 for each persona P:
   session ← renderer.launch(baseUrl)
-  if P.login: auth.login(session, credentials(P))    # from env, in memory only
-  session.freeze()                                    # §8
+  session.freeze()                                    # §8 — before any app code runs
+  if P.login: auth.login(session, credentials(P), config.loginFlow)   # env, in memory only
+  visited ← ∅
 
   # Phase 1 — named flows first: they reach gated states reliably
   for each flow applicable to P:
     replay(flow.steps), recording every transition as a runtime edge
+    for each state reached:                           # the gated states the flow exists to reach
+      visit(state); visited.add(state.signature); frontier.push(state, depth 0)
 
   # Phase 2 — seeds: config.seedRoutes ∪ declared page routes
-  for each route:
-    goto(route); capture()                            # a node, not an edge
-    frontier.push(state, depth 0)
+  for each route ∉ ignore.navigation:
+    goto(route); state ← observe()                    # a node, not an edge
+    if state.signature ∈ visited: continue            # Phase 1 already has it
+    visit(state); visited.add(state.signature); frontier.push(state, 0)
 
   # Phase 3 — bounded interaction walk
   while frontier and budget remains:
     (state, depth) ← frontier.pop()
-    if depth ≥ maxDepth or state.route ∈ ignore.actions: continue
+    if depth ≥ maxDepth or match(state.route, ignore.actions): continue
     reEstablish(state)
-    for action in guard.filter(clickables() ∪ forms())[:actionCap]:
-      before ← (url, fingerprint)
+    for action in guard.filter(clickables() ∪ forms())[:actionCap]:   # drops ignore.navigation
+      before ← (url, overlays, fingerprint)
       perform(action); settle()
-      if (url, fingerprint) == before: record dead action; continue
-      next ← capture()
+      if (url, overlays, fingerprint) == before: record dead action; continue
+      next ← observe()
+      if match(next.route, ignore.navigation):        # a redirect landed us somewhere banned
+        diagnostic; reEstablish(state); continue      # no capture, no edge, no frontier entry
+      visit(next)
       recordRuntimeEdge(state → next, label = action)
-      if next.signature ∉ visited: visited.add(next); frontier.push(next, depth+1)
+      if next.signature ∉ visited: visited.add(next.signature); frontier.push(next, depth+1)
       reEstablish(state)
 ```
+
+`observe()` reads url, overlays, and fingerprint — it never captures. Capture is `visit()`'s job
+alone, which is what makes `ignore.screenshots` unskippable.
 
 box = node = framed screenshot
 ```
@@ -466,13 +533,19 @@ rule that governs the canvas, applied to the numbers behind it.
 
 ### 7.6 Session drop
 
-Call `auth.isLoggedIn` before each frontier pop. On failure, re-login and re-establish the state
-before continuing. A crawl that silently continues logged-out produces a map of the login wall.
+**Only when there is a session to drop.** A persona with no `login` is a first-class persona — the
+logged-out visitor is exactly the role most apps render most differently — and it is never
+checked. Neither is a persona whose auth provider omits the optional `isLoggedIn`.
+
+Where both exist, call `auth.isLoggedIn` before each frontier pop; on failure, re-login and
+re-establish the state before continuing. A crawl that silently continues logged-out produces a
+map of the login wall.
 
 ### 7.7 Personas
 
-The crawl runs end-to-end per persona, and states carry `personaId`. One graph keyed by logical
-screen, with per-persona variants — not N separate maps.
+The crawl runs end-to-end per persona, and states carry `personaId`. One graph keyed by **state
+signature** (§14), with per-persona variants on each node — not N separate maps. A state two
+personas both reached is one node holding two captures.
 
 In v1 the evidence is entirely runtime: *this persona reached this state, that one did not*. The
 static side of product §9 — annotating each element with the `{isAdmin && …}` guard that gates it
@@ -504,11 +577,21 @@ cannot, so a run that is not reproducible says so rather than pretending.
 Three orthogonal rules. A two-rule model cannot express the third, which is why they are named
 separately here.
 
-| Rule | Meaning | Kind |
-|---|---|---|
-| `ignore.navigation` | never click through to these routes | safety — protects the session |
-| `ignore.actions` | visit and capture, but perform no interaction here at all | safety |
-| `ignore.screenshots` | visit and interact, but never capture | privacy |
+| Rule | Meaning | Kind | Enforced at |
+|---|---|---|---|
+| `ignore.navigation` | never click through to these routes | safety — protects the session | `guard.filter`, the seed loop, and post-hoc on the landed route |
+| `ignore.actions` | visit and capture, but perform no interaction here at all | safety | the frontier pop |
+| `ignore.screenshots` | visit and interact, but never capture | privacy | `visit()` — the single call site of `screenshot()` |
+
+**All three lists are globs**, matched with picomatch against the canonical route. A bare
+`/settings/secrets` is therefore an exact match for that one route; write `/settings/secrets/**`
+to include what is below it. Built-in denylist entries are globs by the same rule.
+
+**A redirect can land the crawl on an ignored route**, because the ban is known by destination and
+the destination is known only after the click. Two fallbacks, in order: an `ignore.navigation`
+landing is discarded entirely — no capture, no edge, no frontier entry, one diagnostic — and any
+landing is re-tested against `ignore.screenshots` before capture, so the privacy rule holds even
+for a route the crawl never intended to reach.
 
 Enforcement:
 
@@ -529,13 +612,14 @@ cannot be inferred — the URL, credentials, named flows, and exclusions.
 export default defineConfig({
   url: 'http://localhost:3000',
   personas: [
+    { id: 'anon' },                                     // no login — a persona, not an absence
     { id: 'user',  login: { username: env('USER_EMAIL'),  password: env('USER_PW') } },
     { id: 'admin', login: { username: env('ADMIN_EMAIL'), password: env('ADMIN_PW') } },
   ],
-  loginFlow: { start: '/login', steps: [ /* fill / tap */ ] },
+  loginFlow: { start: '/login', steps: [ /* fill / tap */ ] },  // handed to auth.login (§4)
   flows: [ /* named deep-path flows */ ],
   seedRoutes: ['/', '/dashboard'],
-  ignore: {
+  ignore: {                               // all three are globs over the canonical route (§9)
     navigation:  ['**/beta'],             // never click
     screenshots: ['/settings/secrets'],   // visit ok, never capture — privacy
     actions:     ['**/logout'],           // no actions, for safety
@@ -545,6 +629,9 @@ export default defineConfig({
 
 Loaded with jiti, so a `.ts` config needs no build step. `env(name)` returns a marker object, not
 a value — the value is read during `crawl` and never serialized.
+
+A persona without `login` is the logged-out visitor and is crawled like any other (§7.6). When
+`personas` is omitted entirely, that persona is the default.
 
 ## 11. Parser rules (React)
 
@@ -557,8 +644,7 @@ and that is deliberate (§4.2).
 
 A file's page component is its default export. Accepted shapes: capitalized function declarations,
 arrow/function variables, `memo(...)`, `forwardRef(...)`, classes extending
-`Component`/`PureComponent`, anonymous default exports (named from the file), and **alias
-re-exports** (`const Dialog = DialogPrimitive.Root` where the root binding is imported).
+`Component`/`PureComponent`, and anonymous default exports (named from the file).
 
 A candidate qualifies if its body contains JSX **or** calls one of Next's render-nothing functions
 (`redirect`, `notFound`, `permanentRedirect`, `forbidden`, `unauthorized`) — a page whose whole
@@ -602,6 +688,10 @@ Three shapes, because real repos use all three, often at once:
 | **Package** | known names, plus membership of a design-system **scope** (`@radix-ui/*`, `@mui/*`) — a hand-maintained list of Radix's ~30 packages goes stale immediately |
 | **Vendored directory** | conventional homes (`components/ui`, `src/ui`, `design-system`) holding ≥3 component files; `class-variance-authority` / `tailwind-merge` corroborate |
 | **Workspace package** | a linked workspace package whose name or directory reads as UI — parsed as source, so its components get real files and source locations |
+
+**Alias re-exports** belong here rather than in §11.1: `const Dialog = DialogPrimitive.Root`,
+where the root binding is imported, is a design-system named export, not a page component. A
+router never mounts one, so v1 has no use for it.
 
 Where a vendored primitive wraps a package one, the seam is recorded:
 `components/ui/dialog.tsx#Dialog` → `aliasOf: DialogPrimitive.Root` → `@radix-ui/react-dialog`.
@@ -655,6 +745,12 @@ Vite + React + React Flow. Reads `window.__JSXRAY__` when inlined, otherwise fet
 `./jsxray.json`. Two build outputs from one source: `dist/` (served by `view`) and `dist-single/`
 (one self-contained file, for `--export`).
 
+**A node is a state, not a screen.** One `/settings` with two modals is three nodes, keyed by state
+signature (§3.1). This settles the question §7.7 and §3.1 left open from opposite ends: the graph
+is keyed by state, and a screen is what a group of states has in common, not a node. It follows
+from what an edge is — an edge is a traversed interaction, opening a modal *is* a traversed
+interaction, and an edge needs somewhere to land.
+
 **Node** — a device frame; phone for native targets, browser for web, reader-overridable. Frame
 geometry is fixed per device, so a capture and a not-yet-captured state occupy the same box and
 dropping captures in later shifts no layout. The frame holds the capture, or an explicit empty
@@ -666,7 +762,7 @@ presentation, not analysis:
 | Part | Rule |
 |---|---|
 | Eyebrow | first `meta.groups` entry — a Next route group is exactly this idea already, a grouping that never touches the URL — falling back to the parent path segment. Never the screen's own last segment, which would echo the title back as its own section. |
-| Title | canonical route, de-slugged and title-cased; a dynamic route becomes `<Words> Detail`; an entirely dynamic route (`/*slug`) is named after its parameter, which is what the author called it. `/` is `Home`. |
+| Title | canonical route, de-slugged and title-cased; a dynamic route becomes `<Words> Detail`; an entirely dynamic route (`/*slug`) is named after its parameter, which is what the author called it. `/` is `Home`. An overlay state is titled by its **last `$` segment** — the overlay's own accessible name, de-slugged — which is why §3.1 built identity from that name. |
 | Caption | the interaction count in and out, and the capture's persona. |
 
 **Chrome** — dark ground; a dot grid whose spacing is fixed in screen space, so it does not
@@ -679,13 +775,35 @@ from a separate listing in the viewer, not as nodes (product §11.2).
 **Edges** — runtime only (§5); curved, single-arrowed, labelled with the interaction that caused
 the transition. One edge per pair even when several interactions share it.
 
-**Layout** — `elkjs` with `elk.layered`, direction `RIGHT`, layer-sweep crossing minimization, and
-`considerModelOrder` so the crawl's discovery order drives left-to-right flow order.
+**Layout** — a **tree layout**, `elkjs` `elk.mrtree` (Reingold–Tilford) with direction `RIGHT`.
+Every state is a consequence of the state before it, so depth reads left to right and siblings
+fan out vertically, centred on their parent:
 
-Product §7 asks for a layout with no crossing edges. That is tractable in a way it would not
-otherwise be: runtime edges are confirmed BFS traversals, so the graph is near-tree and therefore
-near-planar by construction. A graph with every declared link drawn — including the ones a nav bar
-produces out of every single screen — is dense enough that no layout engine could oblige.
+```
+                       ┌──────────┐
+                    ┌ ▶│ [screen- │
+                    │  │  shot]   │
+                    │  └──────────┘
+  ┌──────────┐      │  ┌──────────┐
+  │ [screen- │  tap │  │ [screen- │
+  │  shot]   │────────▶│  shot]   │
+  └──────────┘      │  └──────────┘
+                    │  ┌──────────┐
+                    └─▶│ [screen- │
+                       │  shot]   │
+                       └──────────┘
+```
+
+**This replaces the vertical stacking product §7 originally asked for.** Variants of one screen do
+end up stacked — a modal over `/settings` is a child of `/settings` — but as siblings in the tree,
+not as a special case, and the same rule places every other fan-out.
+
+Fall back to `elk.layered` (layer-sweep crossing minimization, `considerModelOrder` so discovery
+order drives flow order) when back-edges make the graph a genuine DAG, which `mrtree` cannot lay
+out. Product §7 asks for no crossing edges, and that is tractable only because runtime edges are
+confirmed BFS traversals: the graph is near-tree by construction. A graph with every declared link
+drawn — including the ones a nav bar produces out of every screen — is dense enough that no layout
+engine could oblige.
 
 **Inspector** — in v1: route facts, the steps that reached the state, outgoing confirmed
 transitions, and which personas reached it. The component tree, props, and design-system origin
@@ -703,8 +821,11 @@ intersect with `Record<string, unknown>`: `keyof` an index-signature type is `st
 | `view` | `-c/--config`, `-f/--file`, `-p/--port`, `-l/--list`, `-e/--export`, `--no-open` |
 | `init` | `-f/--force` |
 
-`view` serves the viewer bundle, `jsxray.json` at a stable path, and the files beside it
-(screenshots). Rules, all of them learned the hard way:
+`-o/--out` defaults to `.jsxray/` and names a **directory**, not a file: the document lands at
+`<out>/jsxray.json` and captures at `<out>/assets/` (§2). `init` adds `.jsxray/` to `.gitignore`.
+
+`view` serves the viewer bundle, `jsxray.json` at a stable path, and the asset directory beside
+it. Rules, all of them learned the hard way:
 
 - Requests that escape either served root are rejected; unknown paths fall back to the SPA shell.
 - **Response headers are not written until the file is known readable.** Writing them first and
@@ -716,7 +837,7 @@ intersect with `Record<string, unknown>`: `keyof` an index-signature type is `st
 
 | Layer | What it proves |
 |---|---|
-| Unit (`core`, `router-next`, `parser-react`) | route identity, state signatures, safety guard, credential handling, segment semantics, module resolution, form-value synthesis |
+| Unit (`core`, `providers/router/next`, `providers/parser/react`) | route identity, state signatures, safety guard, credential handling, segment semantics, module resolution, form-value synthesis |
 | Static e2e (`cli`) | the static pipeline over `fixtures/next-app` and `fixtures/monorepo` — the contract test for `jsxray.json` |
 | **Runtime e2e (`cli`)** | login, crawl, form traversal, capture, runtime edges, bound truncation, session recovery |
 | Server (`cli`) | serving rules, path traversal in three encodings, survival when the document is deleted |
@@ -747,6 +868,9 @@ the smoke harness finds the ones we did not — every item in §17.2 came from i
 | **Kind ids admit unknown values** | `detect` must be able to name a stack it cannot analyze; in aggregate those diagnostics are the roadmap |
 | **Router discovery is a ranked list** | a generated route tree beats a file convention beats a parsed config, and which applies is a property of the repo |
 | **Canvas draws runtime edges only** | a declared link is a hypothesis, a traversal is a fact; the canvas shows facts |
+| **A node is a state, not a screen** | opening a modal is a traversed interaction, and an edge needs somewhere to land |
+| **Tree layout, not stacked variants** | every state is a consequence of the one before it, so variants are siblings and one rule places every fan-out |
+| **`loginFlow` is data for the auth provider** | one call site (`auth.login`) rather than two mechanisms that can disagree |
 | **Static analysis is crawl guidance** | it earns its keep as the checklist and the planner's hints, not as canvas output |
 | **Capture or an explicit empty state** | a wireframe is a second thing to build and maintain that no reader asked for |
 | **v1 is J1+J2 end-to-end** | the unproven risk is crawl-and-capture on an unseen app, so retire that one first |

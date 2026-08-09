@@ -10,12 +10,12 @@ A CLI that reads a react project (in the future, it has to support react native,
 interactive map of every screen wired to the components that build it.
 
 ```
-jsxray run     # read code to understand page flows (static) + drive the app to capture screenshots (runtime) → jsxray.json
-jsxray view    # open the canvas over jsxray.json and show the screenshots in react flow 
+jsxray run     # read code to understand page flows (static) + drive the app to capture screenshots (runtime) → .jsxray/
+jsxray view    # open the canvas over .jsxray/jsxray.json and show the screenshots in react flow
 ```
 
 ![how canvas looks like](./canvas_closeup.png)
-![how canvas looks like](./canvas_closeup.png)
+![how canvas looks like in wide](./canvas_wide.png)
 
 The output is a **flow canvas**: every screen as a framed screenshot, laid out in
 the order a person moves through them. For eg. in a screen, if there is a form, we move through by filling it and clicking on submit so that it takes us to the next screen.
@@ -69,7 +69,7 @@ a consequence of the document being versioned and deterministic, so maybe v2.
 ```
 1. jsxray init     scaffold jsxray.config.ts from the detected stack    ✅
 2. (set credential env vars)
-3. jsxray run      code → jsxray.json, then drive the app → captures    ◐
+3. jsxray run      code → .jsxray/jsxray.json, then drive the app → captures  ◐
 4. jsxray view     open the canvas                                       ✅
 ```
 
@@ -82,7 +82,7 @@ source. The runtime half needs a running URL and credentials.
 
 | Command | Purpose | Status |
 |---|---|---|
-| `jsxray run` | source → `jsxray.json`; with the runtime half, adds captures and boxes | ◐ static only |
+| `jsxray run` | source → `.jsxray/jsxray.json`; with the runtime half, adds captures (`.jsxray/assets/`) and boxes | ◐ static only |
 | `jsxray view` | serve the canvas and open a browser | ✅ |
 | `jsxray view --list` | text listing, for CI logs and terminals | ✅ |
 | `jsxray view --export <file>` | canvas + document as one self-contained HTML file | ✅ |
@@ -98,10 +98,11 @@ exclusions.
 export default defineConfig({
   url: 'http://localhost:3000',
   personas: [
+    { id: 'anon' },                                     // no login — a persona, not an absence
     { id: 'user',  login: { username: env('USER_EMAIL'),  password: env('USER_PW') } },
     { id: 'admin', login: { username: env('ADMIN_EMAIL'), password: env('ADMIN_PW') } },
   ],
-  loginFlow: { start: '/login', steps: [ /* fill / tap */ ] },
+  loginFlow: { start: '/login', steps: [ /* fill / tap */ ] },  // the auth provider's script
   flows: [ /* named deep-path flows */ ],
   seedRoutes: ['/', '/dashboard'],
   ignore: {
@@ -119,12 +120,12 @@ styling.
 
 | Element | Rule |
 |---|---|
-| **Node** | A device frame, we capture screenshots for phone and browser — phone for native targets, browser for web. Reader can override the frame. |
+| **Node** | **One state, not one screen** — a screen with a modal open is a second node. A device frame; phone for native targets, browser for web. Reader can override the frame. |
 | **Frame contents** | The screen capture strictly|
 | **Eyebrow** | Section label above the frame, small uppercase, letterspaced. Sourced from the router's own grouping (a Next route group), falling back to the parent path segment. |
-| **Title** | Human-readable screen name. |
+| **Title** | Human-readable screen name; for a modal state, the modal's own name. |
 | **Edge** | Curved, single arrowed. labelled with the interaction causing the transition, Only one edge even if when several links share a pair. Drawn only when a link is established during runtime |
-| **Layout** | Left-to-right by flow order, auto-laid-out. Different variations of the same screen (for eg, settings screen can have a different modals showing) should be ordered top to bottom, center aligned. It should be clean with no two edges crossing each other ideally. |
+| **Layout** | A **tree**, growing left to right. Every state is a consequence of the state before it, so depth reads left to right and the states reachable from one node fan out vertically, centred on it. Variants of a screen (settings with different modals open) are simply that node's children — no special case. Ideally no two edges cross; the tree shape is what makes that reachable. |
 | **Chrome** | Dark ground, dot grid static regardless of zoom, vertical brand rail, square zoom controls bottom-left. |
 
 ![clean ordering](./clean_ordering.png)
@@ -137,7 +138,7 @@ styling.
 | Pan / zoom / fit | Standard canvas navigation | ✅ |
 | Click a screen | Inspector: route facts, component tree, guards, outgoing transitions | ✅ |
 | Click a tree element | Props with values, source location, design-system origin, what it wraps | ✅ |
-| Toggle non-page screens | Show/hide route handlers and error states | ✅ |
+| Open the non-page list | Route handlers and error states, in a separate view — they render no UI, so they are never nodes (§11.2) | ✅ |
 | Switch frame | phone / browser / auto | ✅ |
 | Switch persona | Filter the canvas to one role | ⬜ needs captures |
 | Click a box on a capture | Jump from a rendered rectangle to its component | ⬜ needs `link` |
@@ -162,15 +163,16 @@ These are product commitments, not implementation details.
 - **Screenshots capture real authenticated data.** Users are told to use a test
   account without sensitive data. `ignore.screenshots` is a separate,
   privacy-only rule: those routes are still visited, never captured. ◐
-- **Determinism.** Freeze animation, time, fonts, and randomness before capture
-  so runs are reproducible and diffable. ⬜
+- **Determinism.** Freeze animation, time, fonts, and randomness *before the app boots* — before
+  login, not just before capture — so runs are reproducible and diffable. ⬜
 
 ## 9. Personas
 
 A first-class dimension, not N separate maps. The same route renders
-differently per role, so the pipeline runs per persona and a screen holds
-per-persona variants — one graph keyed by logical screen, with a persona
-toggle and diff badges.
+differently per role, so the pipeline runs per persona and a node holds
+per-persona variants — one graph, with a persona toggle and diff badges.
+**Logged-out is a persona**, not the absence of one; it is the role most apps
+render most differently.
 
 The static half already supports this: every JSX element records the condition
 gating it (`{isAdmin && <AdminPanel/>}`) with source location and the
@@ -181,10 +183,12 @@ persona actually saw. ◐
 
 | Measure | Target | Now |
 |---|---|---|
-| Runs on an unseen React repo with zero config | no crash, no warnings 
-| Screens found vs. screens that exist | 100% of file-based routes 
-| JSX tied to a component or package 
-| Screens reached at runtime ÷ screens declared
+| Runs on an unseen React repo with zero config | no crash, no unhandled warnings | ⬜ |
+| Screens found ÷ screens that exist | 100% of file-based routes | ⬜ |
+| Screens reached at runtime ÷ screens declared | ≥ 80% on a repo with a test account | ⬜ |
+| Declared links confirmed at runtime ÷ links that could be matched | ≥ 60% | ⬜ |
+| Two runs of the same commit produce identical captures | byte-identical | ⬜ |
+| JSX tied to a component or package | ≥ 95% *(v2)* | ⬜ |
 
 ## 11. Open product questions
 
