@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "esnext"],
+    "jsx": "preserve",
+    "module": "esnext",
+    "moduleResolution": "node",
+    "strict": false,
+    "noEmit": true,
+    "paths": {
+      "constants/*": ["./src/constants/*"],
+      "pages/*": ["./src/pages/*"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules"]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "fixture-react-router-config",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}
