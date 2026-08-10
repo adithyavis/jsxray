@@ -35,6 +35,7 @@ describe('static pipeline over fixtures/next-app', () => {
         '/',
         '/#not-found',
         '/about',
+        '/api/auth/*nextauth#route-handler',
         '/api/health#route-handler',
         '/dashboard',
         '/dashboard/settings',
@@ -42,6 +43,16 @@ describe('static pipeline over fixtures/next-app', () => {
         '/posts/:id',
       ].sort(),
     );
+  });
+
+  it('enumerates a Pages Router API route living beside the App Router', async () => {
+    const document = await analyze('next-app');
+    const handler = document.screens.find(
+      (screen) => screen.id === '/api/auth/*nextauth#route-handler',
+    );
+    expect(handler?.kind).toBe('route-handler');
+    expect(handler?.isPage).toBe(false);
+    expect(handler?.file).toBe('pages/api/auth/[...nextauth].ts');
   });
 
   it('keeps a route group out of the URL but records it', async () => {
@@ -53,7 +64,9 @@ describe('static pipeline over fixtures/next-app', () => {
   it('marks non-page screens so they are never crawled or drawn', async () => {
     const document = await analyze('next-app');
     const nonPages = document.screens.filter((screen) => !screen.isPage).map((s) => s.id);
-    expect(nonPages.sort()).toEqual(['/#not-found', '/api/health#route-handler']);
+    expect(nonPages.sort()).toEqual(
+      ['/#not-found', '/api/auth/*nextauth#route-handler', '/api/health#route-handler'].sort(),
+    );
   });
 
   it('resolves each route file to the component it mounts', async () => {

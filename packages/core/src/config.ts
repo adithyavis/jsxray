@@ -109,7 +109,9 @@ export function resolveConfig(config: JsxrayConfig, configFile: string | null): 
     },
     out: config.out ?? DEFAULT_OUT_DIR,
     renderTarget: config.renderTarget ?? 'web',
-    viewport: config.viewport ?? { width: 1280, height: 800 },
+    viewport:
+      config.viewport ??
+      (config.renderTarget === 'native' ? { width: 390, height: 844 } : { width: 1280, height: 800 }),
     channel: config.channel ?? null,
     bounds: {
       maxDepth: config.bounds?.maxDepth ?? 4,

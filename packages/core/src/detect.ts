@@ -21,30 +21,69 @@ export function detect(root: string): FrameworkProfile {
   if (!pkg) throw new Error(`No package.json in ${root} — jsxray needs one to detect the stack.`);
 
   const evidence: Evidence[] = [];
-  const deps = allDependencies(pkg);
+  const workspaces = detectWorkspaces(root, pkg, evidence);
+
+  // A turborepo root holds only build tooling; the app lives in a workspace.
+  const appDir = allDependencies(pkg).react ? null : findAppPackage(root, workspaces, evidence);
+  const appPkg = appDir
+    ? (readJson<PackageJson>(path.join(root, appDir, 'package.json')) ?? pkg)
+    : pkg;
+  const appRoot = appDir ? path.join(root, appDir) : root;
+
+  const deps = allDependencies(appPkg);
   const has = (name: string): boolean => name in deps;
 
   const ui = detectUi(has, evidence);
   const metaFramework = detectMetaFramework(has, evidence);
-  const { router, routerRoot } = detectRouter(root, has, metaFramework, evidence);
+  const detected = detectRouter(appRoot, has, metaFramework, evidence);
+  const routerRoot = detected.routerRoot && appDir
+    ? toPosix(path.join(appDir, detected.routerRoot))
+    : detected.routerRoot;
 
-  const typescript = exists(path.join(root, 'tsconfig.json'));
+  const typescript = exists(path.join(appRoot, 'tsconfig.json'));
   if (typescript) evidence.push({ fact: 'typescript', source: 'tsconfig.json' });
 
-  const workspaces = detectWorkspaces(root, pkg, evidence);
   const renderTarget = metaFramework === 'expo' ? 'native' : 'web';
 
   return {
     ui,
     metaFramework,
-    router,
+    router: detected.router,
     routerRoot,
     renderTarget,
     typescript,
-    sourceRoots: sourceRoots(root, routerRoot, workspaces),
+    sourceRoots: sourceRoots(root, appDir, routerRoot, workspaces),
     workspaces,
     evidence,
   };
+}
+
+/** The workspace package that actually renders screens, when the root does not. */
+function findAppPackage(
+  root: string,
+  workspaces: readonly WorkspacePackage[],
+  evidence: Evidence[],
+): string | null {
+  const candidates = workspaces.filter((workspace) => {
+    const manifest = readJson<PackageJson>(path.join(root, workspace.dir, 'package.json'));
+    if (!manifest || !allDependencies(manifest).react) return false;
+    return ['app', 'src/app', 'pages', 'src/pages'].some((dir) =>
+      isDirectory(path.join(root, workspace.dir, dir)),
+    );
+  });
+
+  if (!candidates.length) return null;
+
+  const chosen = candidates[0]!;
+  evidence.push({
+    fact: `app package: ${chosen.name}`,
+    source: chosen.dir,
+    detail:
+      candidates.length > 1
+        ? `${candidates.length} candidates: ${candidates.map((entry) => entry.dir).join(', ')}`
+        : 'the root package renders nothing itself',
+  });
+  return chosen.dir;
 }
 
 function allDependencies(pkg: PackageJson): Record<string, string> {
@@ -227,15 +266,18 @@ function workspaceSourceDir(root: string, dir: string, manifest: PackageJson): s
 
 function sourceRoots(
   root: string,
+  appDir: string | null,
   routerRoot: string | null,
   workspaces: WorkspacePackage[],
 ): string[] {
   const roots = new Set<string>();
-  const appDir = ['src', 'app', 'pages', 'components'].filter((dir) =>
-    isDirectory(path.join(root, dir)),
-  );
-  if (appDir.length) appDir.forEach((dir) => roots.add(dir));
-  else roots.add('.');
+  const base = appDir ?? '.';
+  const found = ['src', 'app', 'pages', 'components']
+    .map((dir) => toPosix(path.join(base, dir)))
+    .filter((dir) => isDirectory(path.join(root, dir)));
+
+  if (found.length) found.forEach((dir) => roots.add(dir));
+  else roots.add(base);
   if (routerRoot && isDirectory(path.join(root, routerRoot))) roots.add(routerRoot);
   workspaces.forEach((workspace) => roots.add(workspace.sourceDir));
   return dropNested([...roots].sort());

@@ -216,7 +216,7 @@ export interface ScreenState {
   personaId: string;
   overlays: OverlayRef[];
   capture: Capture | null;
-  captureSkipped: 'privacy' | 'not-run' | 'failed' | null;
+  captureSkipped: 'privacy' | 'not-run' | 'failed' | 'blank' | null;
   reachedVia: Step[];
   deadActions: DeadAction[];
   fingerprint: string;

@@ -3,6 +3,7 @@ import {
   canonicalizePattern,
   canonicalizeUrl,
   edgeMatchKey,
+  inferRoutePatterns,
   looksLikeId,
   matchRoute,
   overlaysOfStateSignature,
@@ -89,5 +90,41 @@ describe('edgeMatchKey', () => {
   it('drops overlay segments so an overlay confirms its screen candidate', () => {
     expect(edgeMatchKey('/posts$share', '/inbox')).toBe('/posts /inbox');
     expect(edgeMatchKey('/posts', null)).toBeNull();
+  });
+});
+
+describe('inferRoutePatterns', () => {
+  it('learns a param once enough values share a position', () => {
+    expect(
+      inferRoutePatterns(['/profile/bsky.app', '/profile/bossett.social', '/profile/propublica.org']),
+    ).toEqual(['/profile/:profile']);
+  });
+
+  it('learns several positions in the same shape', () => {
+    expect(
+      inferRoutePatterns([
+        '/profile/a/feed/whats-hot',
+        '/profile/b/feed/for-science',
+        '/profile/c/feed/art-new',
+      ]),
+    ).toEqual(['/profile/:profile/feed/:feed']);
+  });
+
+  it('leaves two sibling screens alone', () => {
+    expect(inferRoutePatterns(['/settings/privacy', '/settings/saved-feeds'])).toEqual([]);
+  });
+
+  it('never generalizes the first segment, however many there are', () => {
+    expect(inferRoutePatterns(['/feeds', '/settings', '/notifications', '/messages'])).toEqual([]);
+  });
+
+  it('keeps shapes apart even when they are the same length', () => {
+    const learned = inferRoutePatterns([
+      '/profile/a',
+      '/profile/b',
+      '/profile/c',
+      '/settings/privacy',
+    ]);
+    expect(learned).toEqual(['/profile/:profile']);
   });
 });

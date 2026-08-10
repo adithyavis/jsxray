@@ -27,7 +27,9 @@ beforeAll(async () => {
     outDir,
     version: 'test',
     registry,
-    stages: ['crawl'],
+    // enumerate too: the crawl needs the declared routes to tell a screen from a
+    // route handler, which is the difference between a node and a blank capture.
+    stages: ['parse', 'enumerate', 'crawl'],
     url: app.url,
     config: resolveConfig(
       {
@@ -94,6 +96,23 @@ describe('crawl', () => {
     expect(secrets).toBeDefined();
     expect(secrets?.capture).toBeNull();
     expect(secrets?.captureSkipped).toBe('privacy');
+  });
+
+  it('never makes a screen of a route handler, linked or redirected to', () => {
+    expect(document.states.some((state) => state.route === '/api/health')).toBe(false);
+    expect(document.states.some((state) => state.url.endsWith('/api/health'))).toBe(false);
+    expect(
+      document.diagnostics.filter((diagnostic) => diagnostic.code === 'route-handler-landing')
+        .length,
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('reports a screen that rendered nothing instead of writing a blank capture', () => {
+    const blank = document.states.find((state) => state.route === '/blank');
+    expect(blank).toBeDefined();
+    expect(blank?.capture).toBeNull();
+    expect(blank?.captureSkipped).toBe('blank');
+    expect(document.diagnostics.some((diagnostic) => diagnostic.code === 'blank-render')).toBe(true);
   });
 
   it('never clicks logout, by label or by target', () => {

@@ -101,6 +101,7 @@ export interface RendererCapabilities {
 
 export interface LaunchOptions {
   baseUrl: string;
+  renderTarget: RenderTarget;
   headed: boolean;
   viewport: { width: number; height: number };
   deviceScaleFactor?: number;
@@ -120,6 +121,8 @@ export interface RendererSession {
   settle(): Promise<void>;
   url(): Promise<string>;
   fingerprint(): Promise<string>;
+  /** False when the viewport holds nothing — an error shell, a bare API response. */
+  hasContent(): Promise<boolean>;
   overlays(): Promise<Overlay[]>;
   screenshot(): Promise<Uint8Array>;
   clickables(): Promise<Clickable[]>;

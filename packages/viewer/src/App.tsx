@@ -10,7 +10,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import type { JsxrayDocument, ScreenState } from '@jsxray/core';
 import { hasRun, loadDocument } from './document.js';
-import { buildGraph, type FrameKind, type ScreenNodeData } from './graph.js';
+import { buildGraph, frameForCaptures, type FrameKind, type ScreenNodeData } from './graph.js';
 import { layoutGraph } from './layout.js';
 import { Inspector } from './Inspector.js';
 import { NonPageList } from './NonPageList.js';
@@ -47,9 +47,7 @@ function Shell({ children }: { children: React.ReactNode }): ReactElement {
 function Canvas({ document }: { document: JsxrayDocument }): ReactElement {
   const crawled = hasRun(document, 'crawl');
   const [personaId, setPersonaId] = useState<string | null>(null);
-  const [frame, setFrame] = useState<FrameKind>(
-    document.framework?.renderTarget === 'native' ? 'phone' : 'browser',
-  );
+  const [frame, setFrame] = useState<FrameKind>(() => frameForCaptures(document));
   const [selected, setSelected] = useState<ScreenState | null>(null);
   const [showNonPages, setShowNonPages] = useState(false);
 

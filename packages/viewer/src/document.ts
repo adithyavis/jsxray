@@ -30,11 +30,17 @@ export function eyebrowOf(screen: Screen | null, route: string): string | null {
   return deSlug(segments[segments.length - 2]!).toUpperCase();
 }
 
-export function titleOf(signature: string): string {
-  const overlays = signature.split('$').slice(1);
-  if (overlays.length) return deSlug(overlays[overlays.length - 1]!);
+/** An unnamed overlay falls back to a hash (§3.1), which is not a title. */
+const HASH_NAME = /^[0-9a-f]{6,}$/i;
 
+export function titleOf(signature: string): string {
   const screenId = signature.split('$')[0]!;
+  const overlays = signature.split('$').slice(1);
+  if (overlays.length) {
+    const name = overlays[overlays.length - 1]!;
+    return HASH_NAME.test(name) ? `${titleOf(screenId)} · Dialog` : deSlug(name);
+  }
+
   const [route, suffix] = screenId.split('#');
   const segments = route!.split('/').filter(Boolean);
   if (!segments.length) return suffix ? deSlug(suffix) : 'Home';

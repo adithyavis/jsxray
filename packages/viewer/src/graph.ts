@@ -36,6 +36,21 @@ export interface Graph {
   hiddenLinks: number;
 }
 
+/**
+ * The frame follows the capture, not the framework. An Expo app crawled at a
+ * desktop viewport is a desktop screenshot, and drawing it in a phone frame
+ * shrinks a real capture to fit a lie about it (§7.2).
+ */
+export function frameForCaptures(document: JsxrayDocument): FrameKind {
+  const captured = document.states.find((state) => state.capture);
+  if (captured?.capture) {
+    return captured.capture.viewport.width >= captured.capture.viewport.height
+      ? 'browser'
+      : 'phone';
+  }
+  return document.framework?.renderTarget === 'native' ? 'phone' : 'browser';
+}
+
 export function buildGraph(input: GraphInput): Graph {
   const { document, personaId, frame } = input;
 
@@ -86,8 +101,16 @@ export function buildGraph(input: GraphInput): Graph {
       label: labelsByPair.get(pair)!.join(' · '),
       type: 'default',
       animated: false,
-      markerEnd: { type: 'arrowclosed', width: 14, height: 14, color: '#7d8698' } as Edge['markerEnd'],
-      style: { stroke: '#7d8698', strokeWidth: 1.25 },
+      markerEnd: {
+        type: 'arrowclosed',
+        width: 18,
+        height: 18,
+        color: '#7d8698',
+        // Without this the marker scales by strokeWidth and drifts off the line end.
+        markerUnits: 'userSpaceOnUse',
+        strokeWidth: 1,
+      } as Edge['markerEnd'],
+      style: { stroke: '#7d8698', strokeWidth: 1.5 },
       labelStyle: { fill: '#c8cfdb', fontSize: 11 },
       labelBgStyle: { fill: '#161a22' },
       labelBgPadding: [6, 3] as [number, number],

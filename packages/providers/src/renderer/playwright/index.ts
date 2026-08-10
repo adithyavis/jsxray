@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type {
   Clickable,
+  RenderTarget,
   FormGroup,
   LaunchOptions,
   Overlay,
@@ -8,8 +9,13 @@ import type {
   RendererSession,
   SessionState,
 } from '@jsxray/core';
-import { FREEZE_SCRIPT, WAIT_FOR_QUIET_DOM } from './freeze.js';
-import { COLLECT_CLICKABLES, COLLECT_FORMS, COLLECT_OVERLAYS } from './collect.js';
+import { FREEZE_SCRIPT, SETTLE_PAGE, WAIT_FOR_QUIET_DOM } from './freeze.js';
+import {
+  COLLECT_CLICKABLES,
+  COLLECT_FORMS,
+  COLLECT_OVERLAYS,
+  PAINTS_SOMETHING,
+} from './collect.js';
 
 interface PlaywrightModule {
   chromium: {
@@ -76,13 +82,16 @@ export const playwrightRenderer: RendererProvider = {
   id: 'playwright',
   priority: 10,
   capabilities: {
-    renderTargets: ['web'],
+    // §4.4 — an Expo app runs in a browser through React Native Web, so a phone
+    // viewport here is a real map today. The capture records that it came from a
+    // browser rather than a device, which is what keeps the shortcut honest.
+    renderTargets: ['web', 'native'],
     sessionPersistence: true,
     determinismFreeze: true,
     elementBoxes: false,
   },
 
-  supports: (profile) => profile.renderTarget === 'web',
+  supports: (profile) => profile.renderTarget === 'web' || profile.renderTarget === 'native',
 
   async launch(options: LaunchOptions): Promise<RendererSession> {
     const { chromium } = await loadPlaywright();
@@ -108,7 +117,7 @@ export const playwrightRenderer: RendererProvider = {
 
 class PlaywrightSession implements RendererSession {
   readonly rendererId = 'playwright';
-  readonly renderTarget = 'web';
+  readonly renderTarget: RenderTarget;
   readonly viewport: { width: number; height: number };
   readonly deviceScaleFactor: number;
 
@@ -119,6 +128,7 @@ class PlaywrightSession implements RendererSession {
     private readonly options: LaunchOptions,
     deviceScaleFactor: number,
   ) {
+    this.renderTarget = options.renderTarget;
     this.viewport = options.viewport;
     this.deviceScaleFactor = deviceScaleFactor;
   }
@@ -129,10 +139,7 @@ class PlaywrightSession implements RendererSession {
   }
 
   async goto(target: string): Promise<void> {
-    await this.page.goto(new URL(target, this.options.baseUrl).toString(), {
-      waitUntil: 'domcontentloaded',
-    });
-    await this.page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
+    await navigate(this.page, new URL(target, this.options.baseUrl).toString());
   }
 
   /**
@@ -142,22 +149,7 @@ class PlaywrightSession implements RendererSession {
   async settle(): Promise<void> {
     await this.page.waitForLoadState('load').catch(() => undefined);
     await this.page.evaluate<void>(WAIT_FOR_QUIET_DOM).catch(() => undefined);
-    await this.page
-      .evaluate<void>(
-        `(async () => {
-          window.scrollTo(0, 0);
-          await document.fonts.ready;
-          await Promise.all(
-            [...document.images].filter((image) => !image.complete).map((image) =>
-              image.decode().catch(() => undefined),
-            ),
-          );
-          await Promise.all(
-            document.getAnimations().map((animation) => animation.finished.catch(() => undefined)),
-          );
-        })()`,
-      )
-      .catch(() => undefined);
+    await this.page.evaluate<void>(SETTLE_PAGE).catch(() => undefined);
   }
 
   async url(): Promise<string> {
@@ -172,6 +164,11 @@ class PlaywrightSession implements RendererSession {
       .ariaSnapshot()
       .catch(() => '');
     return hash(snapshot);
+  }
+
+  /** On failure, assume there is something to see — a lost capture is the worse loss. */
+  async hasContent(): Promise<boolean> {
+    return this.page.evaluate<boolean>(PAINTS_SOMETHING).catch(() => true);
   }
 
   async overlays(): Promise<Overlay[]> {
@@ -224,6 +221,28 @@ class PlaywrightSession implements RendererSession {
   async close(): Promise<void> {
     await this.browser.close();
   }
+}
+
+/** The part of a page a navigation needs — narrow, so a test can stand one up. */
+export interface Navigable {
+  goto(url: string, options?: unknown): Promise<unknown>;
+  waitForLoadState(state: string, options?: unknown): Promise<void>;
+}
+
+export async function navigate(page: Navigable, url: string): Promise<void> {
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+  } catch (error) {
+    if (!isAbortedNavigation(error)) throw error;
+    await page.waitForLoadState('load').catch(() => undefined);
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+  }
+  await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
+}
+
+/** Chromium's name for "someone else navigated first" — a race, not a dead page. */
+function isAbortedNavigation(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('net::ERR_ABORTED');
 }
 
 function hash(value: string): string {

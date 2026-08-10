@@ -100,6 +100,43 @@ export function looksLikeId(segment: string): boolean {
   return ID_SHAPES.some((shape) => shape.test(segment));
 }
 
+export function inferRoutePatterns(paths: readonly string[], minDistinct = 3): string[] {
+  const shapes = new Map<string, string[][]>();
+  for (const path of paths) {
+    const segments = splitRoute(stripUrl(path));
+    if (segments.length < 2) continue;
+    const key = segments.length + ":" + segments[0];
+    shapes.set(key, [...(shapes.get(key) ?? []), segments]);
+  }
+
+  const patterns = new Set<string>();
+  for (const group of shapes.values()) {
+    const pattern = [...group[0]!];
+    let found = false;
+
+    for (let index = 1; index < pattern.length; index++) {
+      if (new Set(group.map((segments) => segments[index]!)).size < minDistinct) continue;
+      pattern[index] = ":" + paramNameFor(pattern, index);
+      found = true;
+    }
+
+    if (found) patterns.add(joinRoute(pattern));
+  }
+
+  return [...patterns];
+}
+
+function isParamSegment(segment: string): boolean {
+  return segment.startsWith(':') || segment.startsWith('*');
+}
+
+/** `/profile/bsky.app` → `:profile`; the segment above names the one below it. */
+function paramNameFor(segments: readonly string[], index: number): string {
+  const parent = segments[index - 1];
+  if (!parent || isParamSegment(parent)) return 'id';
+  return parent.replace(/s$/, '');
+}
+
 export function canonicalizeUrl(url: string, patterns: readonly string[] = []): string {
   const pathname = stripUrl(url);
   const matched = matchRoute(pathname, patterns);

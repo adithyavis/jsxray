@@ -60,6 +60,28 @@ export const FREEZE_SCRIPT = `
  * Hydration replaces nodes after load, so a click on an element found before it
  * lands hits a detached node. Wait for the DOM to stop mutating.
  */
+export const SETTLE_PAGE = `
+(async () => {
+  const cap = (promise, ms) =>
+    Promise.race([Promise.resolve(promise).catch(() => undefined), new Promise((r) => setTimeout(r, ms))]);
+
+  window.scrollTo(0, 0);
+  await cap(document.fonts.ready, 2000);
+  await cap(
+    Promise.all(
+      [...document.images]
+        .filter((image) => !image.complete)
+        .map((image) => image.decode().catch(() => undefined)),
+    ),
+    2000,
+  );
+  await cap(
+    Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => undefined))),
+    1000,
+  );
+})()
+`;
+
 /**
  * Clock-free on purpose: `Date.now` and `performance.now` are both pinned by the
  * freeze, so the only usable time source in the page is `setTimeout` itself.

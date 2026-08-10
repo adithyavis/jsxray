@@ -29,7 +29,9 @@ export function ScreenNode({ data, selected }: NodeProps): ReactElement {
                 ? 'not captured — privacy rule'
                 : node.active.captureSkipped === 'failed'
                   ? 'capture failed'
-                  : 'the crawl has not run'}
+                  : node.active.captureSkipped === 'blank'
+                    ? 'rendered nothing'
+                    : 'the crawl has not run'}
             </div>
           )}
         </div>

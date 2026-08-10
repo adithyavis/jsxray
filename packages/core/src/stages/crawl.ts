@@ -14,9 +14,11 @@ import type { AuthProvider, RendererProvider, RendererSession } from '../provide
 import {
   canonicalizeUrl,
   edgeMatchKey,
+  inferRoutePatterns,
   isDynamic,
   screenOfStateSignature,
   stateSignature,
+  stripUrl,
 } from '../route.js';
 import type { Clickable, FormGroup, Overlay } from '../runtime.js';
 import type {
@@ -52,6 +54,8 @@ interface Observation {
   signature: string;
   overlays: OverlayRef[];
   fingerprint: string;
+  /** §13 — a route handler renders no UI, so landing on one is not reaching a screen. */
+  routeHandler: boolean;
 }
 
 export async function crawl(input: CrawlInput): Promise<CrawlOutput> {
@@ -65,6 +69,14 @@ export async function crawl(input: CrawlInput): Promise<CrawlOutput> {
   const screenIdByRoute = new Map(
     document.screens.filter((screen) => screen.isPage).map((screen) => [screen.route, screen.id]),
   );
+
+  const handlerRoutes = new Set(
+    document.screens
+      .filter((screen) => screen.kind === 'route-handler')
+      .map((screen) => screen.route),
+  );
+  for (const route of patterns) handlerRoutes.delete(route);
+  const matchPatterns = unique([...patterns, ...handlerRoutes]);
   const personas = config.personas.filter(
     (persona) => !input.personaIds || input.personaIds.includes(persona.id),
   );
@@ -75,6 +87,8 @@ export async function crawl(input: CrawlInput): Promise<CrawlOutput> {
       config,
       guard,
       patterns,
+      matchPatterns,
+      handlerRoutes,
       screenIdByRoute,
       outDir: input.outDir,
       diagnostics,
@@ -87,11 +101,23 @@ export async function crawl(input: CrawlInput): Promise<CrawlOutput> {
     try {
       session = await renderer.launch({
         baseUrl: input.baseUrl,
+        renderTarget: config.renderTarget,
         headed: input.headed,
         viewport: config.viewport,
         timeoutMs: config.bounds.timeoutMs,
         channel: config.channel,
       });
+
+      // §4.4 — a phone-viewport browser shot of an Expo app is a legitimate
+      // artifact; presenting it as a device capture without saying so is not.
+      if (config.renderTarget === 'native' && renderer.id === 'playwright') {
+        diagnostics.push({
+          level: 'info',
+          stage: 'crawl',
+          code: 'native-in-browser',
+          message: `renderTarget is "native" but captures come from a browser at ${config.viewport.width}×${config.viewport.height}, not from a device`,
+        });
+      }
 
       // §7 — freeze before login: login is app code, and an SPA boots once.
       if (renderer.capabilities.determinismFreeze) {
@@ -133,14 +159,98 @@ export async function crawl(input: CrawlInput): Promise<CrawlOutput> {
     }
   }
 
+  mergeInferredRoutes({ states, edges, diagnostics, matchPatterns, screenIdByRoute, outDir: input.outDir });
   return { states, edges, diagnostics };
+}
+
+function mergeInferredRoutes(input: {
+  states: ScreenState[];
+  edges: Edge[];
+  diagnostics: Diagnostic[];
+  matchPatterns: string[];
+  screenIdByRoute: Map<string, string>;
+  outDir: string;
+}): void {
+  const learned = inferRoutePatterns(input.states.map((state) => state.url));
+  if (!learned.length) return;
+
+  const patterns = unique([...input.matchPatterns, ...learned]);
+  const rename = new Map<string, string>();
+  const kept: ScreenState[] = [];
+  const dropped: ScreenState[] = [];
+
+  for (const state of input.states) {
+    const route = canonicalizeUrl(state.url, patterns);
+    const screenId = input.screenIdByRoute.get(route) ?? route;
+    const signature = stateSignature(
+      screenId,
+      state.overlays.map((overlay) => overlay.name),
+    );
+    rename.set(state.signature, signature);
+
+    const existing = kept.find(
+      (candidate) => candidate.signature === signature && candidate.personaId === state.personaId,
+    );
+    if (existing) {
+      dropped.push(state);
+      continue;
+    }
+    state.route = route;
+    state.screenId = screenId;
+    state.signature = signature;
+    kept.push(state);
+  }
+
+  if (!dropped.length) return;
+
+  for (const state of dropped) {
+    if (!state.capture) continue;
+    try {
+      fs.rmSync(path.join(input.outDir, state.capture.path), { force: true });
+    } catch {
+      /* an orphaned capture is untidy, not fatal */
+    }
+  }
+
+  const remap = (signature: string | undefined): string | undefined =>
+    signature === undefined ? undefined : (rename.get(signature) ?? signature);
+
+  for (const edge of input.edges) {
+    if (edge.discoveredBy !== 'runtime') continue;
+    edge.fromState = remap(edge.fromState);
+    edge.toState = remap(edge.toState);
+    edge.from = screenOfStateSignature(edge.fromState ?? edge.from);
+    edge.to = edge.toState ? screenOfStateSignature(edge.toState) : edge.to;
+    edge.matchKey = edgeMatchKey(edge.from, edge.to);
+  }
+
+  input.states.length = 0;
+  input.states.push(...kept);
+  input.edges.splice(
+    0,
+    input.edges.length,
+    ...input.edges.filter(
+      (edge, index, all) => all.findIndex((other) => other.id === edge.id) === index,
+    ),
+  );
+
+  input.diagnostics.push({
+    level: 'info',
+    stage: 'crawl',
+    code: 'merged-inferred-routes',
+    message: `${dropped.length} states folded into inferred patterns: ${learned.join(', ')}`,
+  });
 }
 
 interface PersonaCrawlInput {
   persona: PersonaConfig;
   config: ResolvedConfig;
   guard: SafetyGuard;
+  /** Page routes — what the crawl seeds and what it may come to rest on. */
   patterns: string[];
+  /** Every declared route, page or not — what a URL is canonicalized against. */
+  matchPatterns: string[];
+  handlerRoutes: Set<string>;
   screenIdByRoute: Map<string, string>;
   outDir: string;
   diagnostics: Diagnostic[];
@@ -152,6 +262,9 @@ interface PersonaCrawlInput {
 class PersonaCrawl {
   private readonly visited = new Set<string>();
   private readonly frontier: ScreenState[] = [];
+  /** Concrete paths seen so far, and the patterns inferred from them (§3). */
+  private readonly observedPaths: string[] = [];
+  private learned: string[] = [];
   private readonly deadline: number;
   private stateBudget: number;
 
@@ -182,12 +295,14 @@ class PersonaCrawl {
           steps.push({ kind: 'goto', target: flow.start });
         }
         let previous = await this.observe(session);
+        if (this.discardHandlerLanding(previous, `flow "${flow.id}"`)) continue;
         let previousState = await this.record(session, previous, [...steps], 0);
 
         for (const step of flow.steps) {
           const recorded = await this.perform(session, step);
           steps.push(...recorded);
           const next = await this.observe(session);
+          if (this.discardHandlerLanding(next, `flow "${flow.id}"`)) break;
           if (next.signature === previous.signature) continue;
           const nextState = await this.record(session, next, [...steps], previousState.depth + 1);
           this.addEdge(previousState, nextState, labelOfStep(step), 'action');
@@ -227,6 +342,7 @@ class PersonaCrawl {
         await session.goto(route);
         await session.settle();
         const observation = await this.observe(session);
+        if (this.discardHandlerLanding(observation, route)) continue;
         if (this.visited.has(observation.signature)) continue;
         await this.record(session, observation, [{ kind: 'goto', target: route }], 0);
       } catch (error) {
@@ -279,14 +395,23 @@ class PersonaCrawl {
         ])
         .slice(0, config.bounds.actionCap);
 
-      for (const action of actions) {
+      for (const [index, action] of actions.entries()) {
         if (!this.hasBudget()) return;
         if ('target' in action && guard.blocksNavigation(action.target)) continue;
+        if ('target' in action && this.targetsRouteHandler(action.target)) {
+          diagnostics.push({
+            level: 'info',
+            stage: 'crawl',
+            code: 'route-handler-landing',
+            message: `${labelOf(action) ?? action.ref} points at ${action.target}, a route handler; not followed`,
+          });
+          continue;
+        }
 
         const before = await this.observe(session);
         const performed = await this.attempt(session, action);
         if (!performed.length) {
-          await this.reEstablish(session, state);
+          if (!(await this.resume(session, state, actions.length - index - 1))) break;
           continue;
         }
 
@@ -301,6 +426,11 @@ class PersonaCrawl {
           continue;
         }
 
+        if (this.discardHandlerLanding(after, labelOf(action) ?? action.ref)) {
+          if (!(await this.resume(session, state, actions.length - index - 1))) break;
+          continue;
+        }
+
         // A redirect can land the crawl on a banned route (§9).
         if (guard.blocksNavigation(after.route)) {
           diagnostics.push({
@@ -309,14 +439,14 @@ class PersonaCrawl {
             code: 'ignored-landing',
             message: `${labelOf(action)} redirected to ${after.route}, which ignore.navigation covers; discarded`,
           });
-          await this.reEstablish(session, state);
+          if (!(await this.resume(session, state, actions.length - index - 1))) break;
           continue;
         }
 
         const steps = [...state.reachedVia, ...performed];
         const next = await this.record(session, after, steps, state.depth + 1);
         this.addEdge(state, next, labelOf(action), 'form' in action ? 'form' : 'action');
-        await this.reEstablish(session, state);
+        if (!(await this.resume(session, state, actions.length - index - 1))) break;
       }
     }
   }
@@ -363,6 +493,23 @@ class PersonaCrawl {
     return steps;
   }
 
+  private async resume(
+    session: RendererSession,
+    state: ScreenState,
+    untried: number,
+  ): Promise<boolean> {
+    if (await this.reEstablish(session, state)) return true;
+    if (untried > 0) {
+      this.input.diagnostics.push({
+        level: 'warn',
+        stage: 'crawl',
+        code: 'actions-abandoned',
+        message: `${state.signature}: could not be returned to, so ${untried} action${untried === 1 ? '' : 's'} on it went untried`,
+      });
+    }
+    return false;
+  }
+
   /** §7.4 — backtracking by replay, not history. */
   private async reEstablish(session: RendererSession, state: ScreenState): Promise<boolean> {
     try {
@@ -394,7 +541,8 @@ class PersonaCrawl {
       session.overlays(),
       session.fingerprint(),
     ]);
-    const route = canonicalizeUrl(url, this.input.patterns);
+    this.observePath(url);
+    const route = canonicalizeUrl(url, [...this.input.matchPatterns, ...this.learned]);
     const screenId = this.input.screenIdByRoute.get(route) ?? route;
     const refs = overlays.map(toOverlayRef);
     return {
@@ -406,7 +554,26 @@ class PersonaCrawl {
       ),
       overlays: refs,
       fingerprint,
+      routeHandler: this.input.handlerRoutes.has(route),
     };
+  }
+
+  private targetsRouteHandler(target: string | null): boolean {
+    // In-app only: an off-site URL whose path happens to spell a declared route
+    // is not that route, and the landing check covers wherever it does lead.
+    if (!target?.startsWith('/')) return false;
+    return this.input.handlerRoutes.has(canonicalizeUrl(target, this.input.matchPatterns));
+  }
+
+  private discardHandlerLanding(observation: Observation, how: string): boolean {
+    if (!observation.routeHandler) return false;
+    this.input.diagnostics.push({
+      level: 'info',
+      stage: 'crawl',
+      code: 'route-handler-landing',
+      message: `${how} reached ${observation.url}, a route handler (${observation.route}); no screen, no capture`,
+    });
+    return true;
   }
 
   private async record(
@@ -449,6 +616,17 @@ class PersonaCrawl {
   private async capture(session: RendererSession, state: ScreenState) {
     if (this.input.guard.blocksScreenshot(state.route)) {
       state.captureSkipped = 'privacy';
+      return;
+    }
+
+    if (!(await session.hasContent())) {
+      state.captureSkipped = 'blank';
+      this.input.diagnostics.push({
+        level: 'warn',
+        stage: 'crawl',
+        code: 'blank-render',
+        message: `${state.signature} rendered nothing at ${state.url}; no capture written`,
+      });
       return;
     }
     try {
@@ -530,6 +708,23 @@ class PersonaCrawl {
       return [{ kind: 'tap', target: step.tap, label: step.label ?? null }];
     }
     return [];
+  }
+  
+  private observePath(url: string): void {
+    const path = stripUrl(url);
+    if (this.observedPaths.includes(path)) return;
+    this.observedPaths.push(path);
+
+    const before = this.learned.length;
+    this.learned = inferRoutePatterns(this.observedPaths);
+    for (const pattern of this.learned.slice(before)) {
+      this.input.diagnostics.push({
+        level: 'info',
+        stage: 'crawl',
+        code: 'inferred-route',
+        message: `${pattern} inferred from observed URLs; the router declared no pattern for it`,
+      });
+    }
   }
 
   private hasBudget(): boolean {

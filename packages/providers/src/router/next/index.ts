@@ -55,7 +55,13 @@ export const nextRouter: RouterProvider = {
 
     const base = path.join(input.root, routerRoot);
     const drafts =
-      input.profile.router === 'next-app' ? walkAppRouter(base) : walkPagesRouter(base);
+      input.profile.router === 'next-app'
+        ? 
+          withoutDuplicates([
+            ...walkAppRouter(base),
+            ...walkPagesRouter(path.join(path.dirname(base), 'pages')),
+          ])
+        : walkPagesRouter(base);
 
     const screens = buildScreens(input.root, drafts, input.fileExports);
     const { edges, unattributed } = buildCandidateEdges(input.root, screens, input.navIntents);
@@ -202,6 +208,17 @@ function walkPagesRouter(base: string): ScreenDraft[] {
 
   visit(base, []);
   return drafts;
+}
+
+/** App Router wins a collision — Next resolves it that way, and errors on it. */
+function withoutDuplicates(drafts: readonly ScreenDraft[]): ScreenDraft[] {
+  const seen = new Set<string>();
+  return drafts.filter((draft) => {
+    const key = `${draft.route}#${draft.suffix ?? ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function readDir(dir: string): string[] {

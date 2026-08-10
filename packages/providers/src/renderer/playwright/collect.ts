@@ -196,3 +196,25 @@ ${PREAMBLE}
     })
     .filter((form) => form.controls.length > 0 && form.submit !== null);
 })()`;
+
+/**
+ * Is there anything on screen at all? An error shell, a redirect that resolved to
+ * nothing, a bare API response — each leaves a body that paints no text and no
+ * mark, and a screenshot of that is a white rectangle claiming to be a screen.
+ * A blank capture is worse than no capture: the viewer has an empty state for
+ * "nothing rendered" and none for "this is what the screen looks like" (§14).
+ */
+export const PAINTS_SOMETHING = `(() => {
+  ${PREAMBLE}
+  const body = document.body;
+  if (!body) return false;
+  if ((body.innerText ?? '').trim().length > 0) return true;
+
+  // Text is the usual evidence; a mark is the rest of it — a chart, a logo, a
+  // control with no label. Anything else on a textless page is empty scaffolding.
+  const MARKS = 'img,svg,canvas,video,picture,iframe,object,embed,input,button,select,textarea';
+  return [...body.querySelectorAll(MARKS)].some(visible) ||
+    [...body.querySelectorAll('*')].some(
+      (el) => visible(el) && getComputedStyle(el).backgroundImage !== 'none',
+    );
+})()`;
