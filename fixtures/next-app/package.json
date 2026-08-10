@@ -1,0 +1,18 @@
+{
+  "name": "fixture-next-app",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "next": "^15.5.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}
