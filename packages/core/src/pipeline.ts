@@ -89,7 +89,9 @@ export async function run(options: RunOptions): Promise<JsxrayDocument> {
               level: 'warn',
               stage: 'enumerate',
               code: 'no-router-provider',
-              message: `detected router "${document.framework.router ?? 'none'}"; supported: next-app, next-pages, react-router (file), tanstack-router. The crawl still runs from seedRoutes; coverage reports null (§4.3)`,
+              message: `detected router "${document.framework.router ?? 'none'}"; supported: ${options.registry.router
+                .map((provider) => provider.id)
+                .join(', ')}. The crawl still runs from seedRoutes; coverage reports null (§4.3)`,
             });
           } else {
             const enumerated = await router.enumerate({

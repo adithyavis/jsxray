@@ -106,6 +106,8 @@ export interface LaunchOptions {
   viewport: { width: number; height: number };
   deviceScaleFactor?: number;
   timeoutMs: number;
+  /** §8 — epoch ms the frozen clock reads. */
+  clockMs: number;
   /** Drive an installed browser instead of the bundled one. */
   channel?: string | null;
 }

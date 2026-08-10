@@ -74,6 +74,8 @@ export interface JsxrayConfig {
   /** Drive an installed browser instead of the bundled one, e.g. `'chrome'`. */
   channel?: string | null;
   bounds?: Bounds;
+  /** §8 — what the frozen clock reads. `'start'`, or a date to pin across runs. */
+  clock?: 'start' | string | number;
 }
 
 export interface ResolvedConfig {
@@ -88,6 +90,8 @@ export interface ResolvedConfig {
   viewport: { width: number; height: number };
   channel: string | null;
   bounds: Required<Bounds>;
+  /** Epoch ms, or null to freeze at whatever the clock reads when the crawl starts. */
+  clock: number | null;
   configFile: string | null;
 }
 
@@ -119,8 +123,16 @@ export function resolveConfig(config: JsxrayConfig, configFile: string | null): 
       actionCap: config.bounds?.actionCap ?? 12,
       timeoutMs: config.bounds?.timeoutMs ?? 10 * 60_000,
     },
+    clock: resolveClock(config.clock),
     configFile,
   };
+}
+
+/** §8 — null means the crawl reads the wall clock once at start. */
+function resolveClock(clock: JsxrayConfig['clock']): number | null {
+  if (clock === undefined || clock === 'start') return null;
+  const epoch = typeof clock === 'number' ? clock : Date.parse(clock);
+  return Number.isFinite(epoch) ? epoch : null;
 }
 
 const CONFIG_FILENAMES = [

@@ -21,6 +21,8 @@ export interface ScreenDraft {
   suffix?: string | null;
   meta?: Partial<ScreenMeta>;
   layoutFiles?: string[];
+  /** §13.2 — the export the route mounts, where the router named one. */
+  componentName?: string | null;
 }
 
 export function buildScreens(
@@ -31,6 +33,7 @@ export function buildScreens(
   const defaultByFile = new Map(
     fileExports.map((entry) => [entry.file, entry.defaultComponentId]),
   );
+  const namedByFile = new Map(fileExports.map((entry) => [entry.file, entry.named]));
   const routeCounts = new Map<string, number>();
   for (const draft of drafts) routeCounts.set(draft.route, (routeCounts.get(draft.route) ?? 0) + 1);
 
@@ -45,7 +48,7 @@ export function buildScreens(
       kind: draft.kind,
       isPage: draft.isPage,
       file,
-      componentId: file ? (defaultByFile.get(file) ?? null) : null,
+      componentId: file ? namedComponentId(file, draft.componentName, namedByFile, defaultByFile) : null,
       layoutComponentIds: (draft.layoutFiles ?? [])
         .map((layout) => defaultByFile.get(toRepoPath(root, layout)) ?? null)
         .filter((id): id is string => id !== null),
@@ -61,6 +64,20 @@ export function buildScreens(
   });
 }
 
+/** The named export if the file really has it, the default otherwise. */
+function namedComponentId(
+  file: string,
+  componentName: string | null | undefined,
+  namedByFile: ReadonlyMap<string, Record<string, string>>,
+  defaultByFile: ReadonlyMap<string, string | null>,
+): string | null {
+  if (componentName) {
+    const local = namedByFile.get(file)?.[componentName];
+    if (local) return `${file}#${local}`;
+  }
+  return defaultByFile.get(file) ?? null;
+}
+
 /**
  * §5 — candidate transitions. An intent is attributed to the screen whose
  * component owns it, or to the screen it is co-located with; a nav bar shared
@@ -73,9 +90,13 @@ export function buildCandidateEdges(
 ): { edges: Edge[]; unattributed: number } {
   const pages = screens.filter((screen) => screen.isPage);
   const patterns = pages.map((screen) => screen.route);
-  const byComponentId = new Map(
-    pages.filter((screen) => screen.componentId).map((screen) => [screen.componentId!, screen]),
-  );
+  // First declaration wins: an aliased screen is one component, two routes.
+  const byComponentId = new Map<string, Screen>();
+  for (const screen of pages) {
+    if (screen.componentId && !byComponentId.has(screen.componentId)) {
+      byComponentId.set(screen.componentId, screen);
+    }
+  }
   const byDirectory = new Map<string, Screen>();
   for (const screen of pages) {
     if (screen.file) byDirectory.set(path.posix.dirname(screen.file), screen);

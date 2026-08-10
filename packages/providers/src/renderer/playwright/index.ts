@@ -9,7 +9,7 @@ import type {
   RendererSession,
   SessionState,
 } from '@jsxray/core';
-import { FREEZE_SCRIPT, SETTLE_PAGE, WAIT_FOR_QUIET_DOM } from './freeze.js';
+import { freezeScript, SETTLE_PAGE, WAIT_FOR_QUIET_DOM } from './freeze.js';
 import {
   COLLECT_CLICKABLES,
   COLLECT_FORMS,
@@ -135,7 +135,7 @@ class PlaywrightSession implements RendererSession {
 
   /** §8 — an init script, because it has to land before the first line of app code. */
   async freeze(): Promise<void> {
-    await this.context.addInitScript({ content: FREEZE_SCRIPT });
+    await this.context.addInitScript({ content: freezeScript(this.options.clockMs) });
   }
 
   async goto(target: string): Promise<void> {

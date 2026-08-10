@@ -1,7 +1,5 @@
 /** §8 — what to freeze. Injected before any app code runs. */
 
-const FIXED_EPOCH_MS = 1_577_836_800_000; // 2020-01-01T00:00:00Z
-
 // in the future, also suppport react native
 export const FREEZE_STYLE = `
 *, *::before, *::after {
@@ -16,9 +14,9 @@ export const FREEZE_STYLE = `
 html { scrollbar-width: none !important; }
 `;
 
-export const FREEZE_SCRIPT = `
+export const freezeScript = (epochMs: number): string => `
 (() => {
-  const FIXED = ${FIXED_EPOCH_MS};
+  const FIXED = ${epochMs};
   const RealDate = Date;
 
   function FrozenDate(...args) {

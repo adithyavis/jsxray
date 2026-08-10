@@ -81,6 +81,9 @@ export async function crawl(input: CrawlInput): Promise<CrawlOutput> {
     (persona) => !input.personaIds || input.personaIds.includes(persona.id),
   );
 
+  // §8 — one clock for the whole run, so personas stay diffable against each other.
+  const clockMs = config.clock ?? Date.now();
+
   for (const persona of personas) {
     const walker = new PersonaCrawl({
       persona,
@@ -105,6 +108,7 @@ export async function crawl(input: CrawlInput): Promise<CrawlOutput> {
         headed: input.headed,
         viewport: config.viewport,
         timeoutMs: config.bounds.timeoutMs,
+        clockMs,
         channel: config.channel,
       });
 
