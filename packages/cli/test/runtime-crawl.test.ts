@@ -13,10 +13,20 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 let app: { url: string; close(): Promise<void> };
 let outDir: string;
 let document: JsxrayDocument;
+/** A capture left by an earlier run, to prove the crawl clears it. */
+let stale: string;
+let staleOtherPersona: string;
 
 beforeAll(async () => {
   app = await startFixtureApp(0);
   outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jsxray-crawl-'));
+
+  stale = path.join(outDir, 'assets', 'anon', 'gone-from-the-app.png');
+  staleOtherPersona = path.join(outDir, 'assets', 'ghost', 'not-crawled.png');
+  for (const file of [stale, staleOtherPersona]) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'not a real png');
+  }
 
   process.env.JSXRAY_TEST_USER = 'user@example.com';
   process.env.JSXRAY_TEST_ADMIN = 'admin@example.com';
@@ -81,6 +91,19 @@ describe('crawl', () => {
 
   it('gives an overlay its own state, named after its accessible name', () => {
     expect(signatures('user')).toContain('/settings$rename-workspace');
+  });
+
+  it('clears a crawled persona’s stale captures, and leaves other personas alone', () => {
+    expect(fs.existsSync(stale)).toBe(false);
+    expect(fs.existsSync(staleOtherPersona)).toBe(true);
+  });
+
+  it('keeps every capture the document points at', () => {
+    const referenced = document.states
+      .filter((state) => state.capture)
+      .map((state) => path.join(outDir, state.capture!.path));
+    expect(referenced.length).toBeGreaterThan(0);
+    expect(referenced.filter((file) => !fs.existsSync(file))).toEqual([]);
   });
 
   it('writes a capture per state and records the renderer that produced it', () => {

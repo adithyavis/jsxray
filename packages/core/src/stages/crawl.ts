@@ -85,6 +85,7 @@ export async function crawl(input: CrawlInput): Promise<CrawlOutput> {
   const clockMs = config.clock ?? Date.now();
 
   for (const persona of personas) {
+    clearCaptures(input.outDir, persona.id);
     const walker = new PersonaCrawl({
       persona,
       config,
@@ -733,6 +734,23 @@ class PersonaCrawl {
 
   private hasBudget(): boolean {
     return this.stateBudget > 0 && Date.now() < this.deadline;
+  }
+}
+
+/**
+ * A capture the current run did not write is a picture of an older app. Cleared
+ * per persona, so crawling one persona leaves the others' captures alone.
+ */
+function clearCaptures(outDir: string, personaId: string): void {
+  const dir = path.join(outDir, ASSET_DIRNAME, personaId);
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (entry.endsWith('.png')) fs.rmSync(path.join(dir, entry), { force: true });
   }
 }
 
