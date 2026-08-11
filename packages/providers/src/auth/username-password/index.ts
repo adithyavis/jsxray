@@ -87,7 +87,10 @@ async function replay(
   if ('tap' in step || 'submit' in step) {
     await session.tap('tap' in step ? step.tap : step.submit);
     await session.settle();
+    return;
   }
+  // A login screen that arrives on a timer is settled long before it exists.
+  if ('wait' in step) await new Promise((resolve) => setTimeout(resolve, step.wait));
 }
 
 function substitute(value: string, credentials: Credentials): string {
