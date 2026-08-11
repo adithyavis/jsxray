@@ -725,6 +725,8 @@ class PersonaCrawl {
       await session.settle();
       return [{ kind: 'tap', target: step.tap, label: step.label ?? null }];
     }
+    // A wait moves nothing, so it records no step and replay does not need it.
+    if ('wait' in step) await sleep(step.wait);
     return [];
   }
   
