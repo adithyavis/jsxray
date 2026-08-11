@@ -624,6 +624,8 @@ class PersonaCrawl {
       return;
     }
 
+    await this.hold(session);
+
     if (!(await session.hasContent())) {
       state.captureSkipped = 'blank';
       this.input.diagnostics.push({
@@ -660,6 +662,17 @@ class PersonaCrawl {
         message: `${state.signature}: ${messageOf(error)}`,
       });
     }
+  }
+
+  /**
+   * §7.10 — settle answers "has the page stopped moving", which a skeleton has. The
+   * hold is for the data behind it, and a second settle awaits whatever it painted.
+   */
+  private async hold(session: RendererSession): Promise<void> {
+    const { delayMs } = this.input.config.capture;
+    if (delayMs <= 0) return;
+    await sleep(delayMs);
+    await session.settle();
   }
 
   private addEdge(from: ScreenState, to: ScreenState, label: string | null, kind: string) {
@@ -776,6 +789,10 @@ function toOverlayRef(overlay: Overlay): OverlayRef {
     role: overlay.role,
     via: overlay.via,
   };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function unique(values: readonly string[]): string[] {

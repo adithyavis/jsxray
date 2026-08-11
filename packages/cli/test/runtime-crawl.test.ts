@@ -64,6 +64,8 @@ beforeAll(async () => {
         seedRoutes: ['/', '/settings', '/signup', '/secrets', '/billing'],
         ignore: { screenshots: ['/secrets'] },
         bounds: { maxDepth: 3, maxStates: 40, actionCap: 8, timeoutMs: 120_000 },
+        // The fixture paints in one pass, so there is no skeleton to wait out (§7.10).
+        capture: { delayMs: 0 },
       },
       null,
     ),

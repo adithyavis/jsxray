@@ -118,6 +118,7 @@ async function run(options: StubOptions): Promise<CrawlOutput & { taps: string[]
         personas: [{ id: 'anon' }],
         seedRoutes: ['/login'],
         bounds: { maxDepth: 3, maxStates: 10, actionCap: 8, timeoutMs: 10_000 },
+        capture: { delayMs: 0 },
       },
       null,
     ),

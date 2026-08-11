@@ -61,6 +61,11 @@ export interface Bounds {
   timeoutMs?: number;
 }
 
+export interface CaptureRules {
+  /** §7.10 — how long to hold after settling, so skeletons resolve before the shutter. */
+  delayMs?: number;
+}
+
 export interface JsxrayConfig {
   url?: string;
   personas?: PersonaConfig[];
@@ -74,6 +79,7 @@ export interface JsxrayConfig {
   /** Drive an installed browser instead of the bundled one, e.g. `'chrome'`. */
   channel?: string | null;
   bounds?: Bounds;
+  capture?: CaptureRules;
   /** §8 — what the frozen clock reads. `'start'`, or a date to pin across runs. */
   clock?: 'start' | string | number;
 }
@@ -90,6 +96,7 @@ export interface ResolvedConfig {
   viewport: { width: number; height: number };
   channel: string | null;
   bounds: Required<Bounds>;
+  capture: Required<CaptureRules>;
   /** Epoch ms, or null to freeze at whatever the clock reads when the crawl starts. */
   clock: number | null;
   configFile: string | null;
@@ -123,6 +130,7 @@ export function resolveConfig(config: JsxrayConfig, configFile: string | null): 
       actionCap: config.bounds?.actionCap ?? 12,
       timeoutMs: config.bounds?.timeoutMs ?? 10 * 60_000,
     },
+    capture: { delayMs: config.capture?.delayMs ?? 2_000 },
     clock: resolveClock(config.clock),
     configFile,
   };
