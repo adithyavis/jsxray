@@ -189,6 +189,14 @@ describe('layout', () => {
     expect(byId.get('/')!).toBeLessThan(byId.get('/settings')!);
     expect(byId.get('/settings')!).toBeLessThan(byId.get('/settings$rename-workspace')!);
   });
+
+  it('leaves room between depths for the edge and its label', async () => {
+    const { nodes, edges } = buildGraph({ document, personaId: 'user', frame: 'browser' });
+    const laid = await layoutGraph(nodes, edges);
+    const byId = new Map(laid.map((node) => [node.id, node.position.x]));
+    const gap = byId.get('/settings')! - byId.get('/')! - FRAME_SIZE.browser.width;
+    expect(gap).toBeGreaterThanOrEqual(200);
+  });
 });
 
 function overlaps(a: { position: { x: number; y: number }; width?: number; height?: number }, b: typeof a): boolean {

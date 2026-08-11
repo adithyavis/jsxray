@@ -3,6 +3,10 @@ import type { Edge, Node } from '@xyflow/react';
 
 const elk = new ELK();
 
+/** §14 — the gap between depths carries the edge and its label; siblings only stack. */
+const GAP_X = 220;
+const GAP_Y = 48;
+
 /**
  * §14 — a tree layout, because every state is a consequence of the one before
  * it. `elk.layered` is the fallback when back-edges make the graph a real DAG.
@@ -10,14 +14,17 @@ const elk = new ELK();
 export async function layoutGraph(nodes: Node[], edges: Edge[]): Promise<Node[]> {
   if (!nodes.length) return nodes;
 
-  const algorithm = isTree(nodes, edges) ? 'mrtree' : 'layered';
+  const tree = isTree(nodes, edges);
+  // `mrtree` spends `spacing.nodeNode` in both directions, so the wider horizontal
+  // gap is bought by padding each node instead — the returned x is still its left edge.
+  const pad = tree ? GAP_X - GAP_Y : 0;
   const graph = {
     id: 'root',
     layoutOptions: {
-      'elk.algorithm': algorithm,
+      'elk.algorithm': tree ? 'mrtree' : 'layered',
       'elk.direction': 'RIGHT',
-      'elk.spacing.nodeNode': '48',
-      'elk.layered.spacing.nodeNodeBetweenLayers': '120',
+      'elk.spacing.nodeNode': String(GAP_Y),
+      'elk.layered.spacing.nodeNodeBetweenLayers': String(GAP_X),
       'elk.spacing.edgeNode': '32',
       'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
       'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
@@ -25,7 +32,7 @@ export async function layoutGraph(nodes: Node[], edges: Edge[]): Promise<Node[]>
     },
     children: nodes.map((node) => ({
       id: node.id,
-      width: node.width ?? 260,
+      width: (node.width ?? 260) + pad,
       height: node.height ?? 240,
     })),
     edges: edges.map((edge) => ({
