@@ -1,6 +1,6 @@
 import type { JsxrayDocument, ScreenState } from '@jsxray/core';
 import type { Edge, Node } from '@xyflow/react';
-import { eyebrowOf, screenOf, titleOf } from './document.js';
+import { eyebrowOf, screenOf, titleOf, transitionOf } from './document.js';
 
 export type FrameKind = 'browser' | 'phone';
 
@@ -72,20 +72,21 @@ export function buildGraph(input: GraphInput): Graph {
 
   const inbound = new Map<string, number>();
   const outbound = new Map<string, number>();
-  const labelsByPair = new Map<string, string[]>();
+  const captionByPair = new Map<string, string>();
   const order: string[] = [];
 
   for (const edge of runtimeEdges) {
     const pair = `${edge.fromState}->${edge.toState}`;
     outbound.set(edge.fromState!, (outbound.get(edge.fromState!) ?? 0) + 1);
     inbound.set(edge.toState!, (inbound.get(edge.toState!) ?? 0) + 1);
-    if (!labelsByPair.has(pair)) {
-      labelsByPair.set(pair, []);
-      order.push(pair);
-    }
-    const label = edge.label ?? edge.kind;
-    const labels = labelsByPair.get(pair)!;
-    if (label && !labels.includes(label)) labels.push(label);
+    if (captionByPair.has(pair)) continue;
+    order.push(pair);
+    // One line per pair, so it is named once — by the transition, not by every
+    // control that makes it (§14).
+    captionByPair.set(
+      pair,
+      transitionOf(bySignature.get(edge.fromState!)![0]!, bySignature.get(edge.toState!)![0]!, edge),
+    );
   }
 
   const hiddenLinks = findHiddenLinks(order);
@@ -98,7 +99,7 @@ export function buildGraph(input: GraphInput): Graph {
       id: pair,
       source,
       target,
-      label: labelsByPair.get(pair)!.join(' · '),
+      label: captionByPair.get(pair)!,
       type: 'default',
       animated: false,
       markerEnd: {

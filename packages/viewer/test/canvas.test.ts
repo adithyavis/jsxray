@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { JsxrayDocument, ScreenState } from '@jsxray/core';
-import { eyebrowOf, titleOf } from '../src/document.js';
+import type { Edge } from '@jsxray/core';
+import { eyebrowOf, titleOf, transitionOf } from '../src/document.js';
 import { FRAME_SIZE, buildGraph, findHiddenLinks } from '../src/graph.js';
 import { layoutGraph } from '../src/layout.js';
 
@@ -15,7 +16,10 @@ const state = (
   route,
   url: `http://localhost:3000${route}`,
   personaId,
-  overlays: [],
+  overlays: signature
+    .split('$')
+    .slice(1)
+    .map((name) => ({ name, role: 'dialog', via: 'role' as const })),
   capture: captured
     ? {
         path: `assets/${personaId}/x.png`,
@@ -30,6 +34,16 @@ const state = (
   deadActions: [],
   fingerprint: 'abc',
   depth: 0,
+});
+
+const edge = (label: string): Edge => ({
+  id: 'x',
+  discoveredBy: 'runtime',
+  kind: 'action',
+  from: '/feed',
+  to: '/feed',
+  label,
+  matchKey: '/feed /feed',
 });
 
 const document = {
@@ -105,6 +119,31 @@ describe('graph', () => {
   it('sizes every frame identically so a later capture shifts no layout', () => {
     const { nodes } = buildGraph({ document, personaId: 'user', frame: 'phone' });
     expect(new Set(nodes.map((node) => node.height))).toEqual(new Set([FRAME_SIZE.phone.height]));
+  });
+});
+
+describe('edge anatomy', () => {
+  it('names an edge by the transition, not by the words on the control', () => {
+    const { edges } = buildGraph({ document, personaId: 'user', frame: 'browser' });
+    expect(edges.map((edge) => edge.label)).toEqual([
+      'Navigate to /settings',
+      'Open the rename workspace dialog',
+    ]);
+  });
+
+  it('falls back to the control, shortened, when nothing structural changed', () => {
+    const from = state('/feed', 'user', true);
+    const to = { ...state('/feed', 'user', true), fingerprint: 'def' };
+    expect(transitionOf(from, to, edge('View this user’s verifications'))).toBe(
+      'View this user’s verifications',
+    );
+    expect(transitionOf(from, to, edge('a'.repeat(60)))).toBe(`${'a'.repeat(39)}…`);
+  });
+
+  it('names a closed overlay too', () => {
+    const open = state('/settings$rename-workspace', 'user', true, '/settings');
+    const shut = state('/settings', 'user', true);
+    expect(transitionOf(open, shut, edge('Cancel'))).toBe('Close the rename workspace dialog');
   });
 });
 
