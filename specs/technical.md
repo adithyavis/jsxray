@@ -428,6 +428,8 @@ reloads — a freeze applied after it has already missed the values the app read
 ```
 visit(state) =                                        # one place, so no rule is skippable
   if match(state.route, ignore.screenshots): state.capture ← null       # privacy
+  wait(config.capture.delayMs); settle()              # §7.10 — hold for the data
+  if not hasContent():                       state.capture ← null       # blank, §7.8
   else:                                    state.capture ← screenshot()
   return state
 
@@ -459,6 +461,8 @@ for each persona P:
       perform(action); settle()
       if (url, overlays, fingerprint) == before: record dead action; continue
       next ← observe()
+      if next.route is a declared route handler:      # §7.9 — not a screen at all
+        diagnostic; reEstablish(state); continue      # no capture, no edge, no frontier entry
       if match(next.route, ignore.navigation):        # a redirect landed us somewhere banned
         diagnostic; reEstablish(state); continue      # no capture, no edge, no frontier entry
       visit(next)
@@ -532,6 +536,17 @@ it interesting. Re-reach a state by `goto` on its URL plus replaying the `reache
 that produced it. Every state therefore stores the ordered steps that reached it, which is also
 what the inspector shows a reader.
 
+**A replay that fails ends the state.** Every action still queued was found in a DOM the crawl has
+left, and its ref is a path into that DOM: fired from anywhere else they miss, or worse, hit
+whatever happens to sit at the same path and record a transition nobody made. One OAuth button that
+navigates away is enough to lose the page. The untried actions are reported by count — they are not
+dead, they were never reached (§7.5).
+
+**A navigation cancelled mid-flight is retried once.** Chromium aborts a `goto` that arrives while
+another navigation is in progress, which is exactly the moment a replay lands after an action that
+navigated. The page is healthy and the request lost a race, so wait for the one in front and ask
+again. Only then is the state given up.
+
 ### 7.5 Bounds
 
 `maxDepth`, `maxStates`, a per-state action cap, and a wall-clock budget. **Every bound that
@@ -571,6 +586,45 @@ static side of product §9 — annotating each element with the `{isAdmin && …
 — arrives with the component graph in v2. The persona toggle is honest either way, because
 "unreached by this persona" is a fact the crawl establishes on its own.
 
+### 7.8 A blank render is reported, never captured
+
+A screenshot of a page that painted nothing — an error shell, a redirect that resolved to nothing,
+a route whose data never arrived — is a white rectangle asserting that the screen looks like that.
+The state is still real and stays in the document; the capture becomes `captureSkipped: "blank"`
+plus a `warn`, and the viewer draws the empty state it already has. §14's honesty rule applied to
+the frame: no capture says less than a blank one, and less is the true amount.
+
+A render counts as blank when the body paints no text and no mark — no image, canvas, media,
+control, or background image. A canvas-only app is the known false positive, and it costs a
+diagnostic rather than a node.
+
+### 7.9 A route handler is not a screen
+
+§13 declares them, so the crawl can recognize one: URLs are canonicalized against **every**
+declared route, page or not, and a landing on a route handler is discarded with a diagnostic — no
+capture, no node, no edge — wherever it came from, seed, flow, or traversal. A link pointing at
+one is not followed at all. Without this, an app that redirects a failed sign-in to
+`/api/auth/error` gets that response filed under whichever page route matched it — a catch-all
+`/[...slug]`, usually — and screenshotted as that screen.
+
+### 7.10 A capture holds for the data, not only for the paint
+
+`settle()` answers "has the page stopped moving", and a skeleton screen has stopped moving. It is
+laid out, its fonts are ready, its images are decoded, and every one of its rectangles is grey.
+Captured there, the map reports the loading state as the screen — worse than a blank capture,
+because a grey approximation of the real layout reads as a real screen.
+
+So capture holds `config.capture.delayMs` (default **2000**) after settling, then settles again —
+the second settle awaits the fonts and images that the newly arrived data brought with it. The
+wait is per state and applies to the whole crawl; an app that paints in one pass sets it to `0`,
+and an app whose feed takes longer raises it.
+
+Two properties keep the hold honest. It is **not** a retry loop against a skeleton heuristic:
+"is this a skeleton" has no reliable signal, and a wrong answer either captures the loading state
+anyway or waits out the budget on a screen that was already done. And it changes no identity —
+`observe()` still reads url, overlays, and fingerprint before the hold, so what the hold can
+change is the picture, never the graph.
+
 ## 8. Determinism
 
 Freezing is a **precondition of capture**, not a post-process. It is what makes two runs diffable,
@@ -579,7 +633,7 @@ which is what makes J6 possible later.
 | Source of variance | Freeze |
 |---|---|
 | Animation, transitions | emulate `prefers-reduced-motion: reduce`, and inject a stylesheet zeroing `animation-duration` / `transition-duration` |
-| Time | pin `Date.now`, `new Date()`, `performance.now` via an init script, before any app code runs |
+| Time | pin `Date.now`, `new Date()`, `performance.now` via an init script, before any app code runs — to `config.clock`, which defaults to the moment the crawl starts |
 | Randomness | seed `Math.random` from the same init script |
 | Fonts | await `document.fonts.ready`; capture only after |
 | Images | await decode — a half-loaded image is a different screenshot every run |
@@ -590,6 +644,21 @@ web it is an init script, because it has to land before the first line of app co
 applied after load has already lost the values the app captured at module scope. A native renderer
 freezes the same list at its own entry point, and declares `determinismFreeze: false` if it
 cannot, so a run that is not reproducible says so rather than pretending.
+
+**What the clock is pinned *to* is a trade, and the default favours breadth.** A constant epoch
+makes two runs byte-identical, which is the strongest form of diffable. It also breaks any app that
+compares a server timestamp against the client clock: an epoch in the past means data stamped
+*now* appears to arrive from the future, and the arithmetic that follows throws. jsxray shipped a
+hardcoded `2020-01-01` and it cost 59 of TanStack's 105 pages — the app threw during hydration,
+React unmounted the tree, and each page was recorded as `blank-render`, which reads as *the app
+has nothing here* rather than *we broke it*. The freeze was the most invisible kind of wrong: it
+degraded the thing it existed to protect, and reported the damage as a property of the target.
+
+So `config.clock` defaults to `'start'` — the wall clock read once when the crawl begins, shared by
+every persona in the run. A single run stays internally consistent, which is what capture actually
+requires; two runs on different days differ only where a screen renders a date. Pin an ISO date or
+epoch when cross-run diffing matters more than breadth, and know that it excludes apps whose data
+is timestamped relative to now.
 
 ## 9. Safety and privacy
 
@@ -638,6 +707,7 @@ export default defineConfig({
   loginFlow: { start: '/login', steps: [ /* fill / tap */ ] },  // handed to auth.login (§4)
   flows: [ /* named deep-path flows */ ],
   seedRoutes: ['/', '/dashboard'],
+  capture: { delayMs: 2000 },             // hold after settling, so skeletons resolve (§7.10)
   ignore: {                               // all three are globs over the canonical route (§9)
     navigation:  ['**/beta'],             // never click
     screenshots: ['/settings/secrets'],   // visit ok, never capture — privacy
@@ -893,8 +963,25 @@ scale with zoom; a vertical brand rail; square zoom controls bottom-left.
 they have no capture and do not belong on the flow canvas. They are reachable from `--list` and
 from a separate listing in the viewer, not as nodes (product §11.2).
 
-**Edges** — runtime only (§5); curved, single-arrowed, labelled with the interaction that caused
-the transition. One edge per pair even when several interactions share it.
+**Edges** — runtime only (§5); curved, single-arrowed, and **named for the transition rather than
+for the words on the control**. One edge per pair even when several interactions share it, so the
+line is named once:
+
+| Transition | Label |
+|---|---|
+| the screen id changed | `Navigate to /profile/:name/feed/:rkey` — the destination's canonical route (§3) |
+| an overlay appeared | `Open the rename workspace dialog` — the overlay's own name, de-slugged, with its role as the noun (§3.1) |
+| an overlay went away | `Close the rename workspace dialog` |
+| a form submitted, nothing structural changed | `Submit <control>` |
+| anything else | the control's label, capped at 40 characters |
+
+An accessible name is written to be read *in place*, next to the thing it acts on: "View this
+user's verifications" is a good button and a bad edge label. Drawn on a line it is longer than the
+node it points at, and it says where the reader already is rather than where the line goes. The
+route says where the line goes, and it is the same string the node, the inspector, and `--list`
+use for that screen. The control's own words are a fact and are not lost — they stay on
+`edge.label` in the document, in the inspector's transition list, and in `--list`. Only the line
+is renamed, which is the same split as eyebrow, title, and caption above.
 
 **One line in per screen — the shortest way there, found breadth-first.** Given both
 `/ → /welcome → /dashboard` and `/ → /dashboard`, the canvas draws only the second: `/dashboard`
@@ -929,6 +1016,13 @@ fan out vertically, centred on their parent:
                        │  shot]   │
                        └──────────┘
 ```
+
+**Spacing is asymmetric, because the two axes carry different things.** Between depths sits the
+edge and its label, so that gap is **220px**; between siblings sits nothing, so that gap is
+**48px**. `elk.layered` takes the two directly as `nodeNodeBetweenLayers` and `nodeNode`. `mrtree`
+has no between-levels option and spends `spacing.nodeNode` in both directions, so the horizontal
+gap is bought by padding each node's width by the difference before handing it to ELK — the
+position that comes back is still the node's own left edge, and the sibling gap is untouched.
 
 **This replaces the vertical stacking product §7 originally asked for.** Variants of one screen do
 end up stacked — a modal over `/settings` is a child of `/settings` — but as siblings in the tree,
@@ -1006,6 +1100,8 @@ the smoke harness finds the ones we did not — every item in §17.2 came from i
 | **Canvas draws runtime edges only** | a declared link is a hypothesis, a traversal is a fact; the canvas shows facts |
 | **A node is a state, not a screen** | opening a modal is a traversed interaction, and an edge needs somewhere to land |
 | **Tree layout, not stacked variants** | every state is a consequence of the one before it, so variants are siblings and one rule places every fan-out |
+| **An edge is named for the transition, not for the control** | an accessible name is written to be read next to the control; on a line it is longer than the node and names where the reader already is |
+| **Capture holds before the shutter** | `settle()` cannot tell a finished screen from a skeleton, and a grey approximation of the layout reads as a real screen |
 | **`loginFlow` is data for the auth provider** | one call site (`auth.login`) rather than two mechanisms that can disagree |
 | **Static analysis is crawl guidance** | it earns its keep as the checklist and the planner's hints, not as canvas output |
 | **Capture or an explicit empty state** | a wireframe is a second thing to build and maintain that no reader asked for |
@@ -1035,6 +1131,13 @@ history — the consequence column is why.
 | Negate ternary / `\|\|` guards | both branches read as the same condition |
 | Keep node data fields out of the index signature | `Omit` silently typed them away, and Vite did not typecheck |
 | Open the stream before writing headers | deleting `jsxray.json` crashed the server → blank canvas |
+| Canonicalize against route handlers too, not just pages | taxonomy's sign-in failure redirects to `/api/auth/error`; with only page routes to match, it landed under the catch-all `/[...slug]` and shipped a white PNG as that screen |
+| An App Router project enumerates `pages/` as well | the handler above lives in `pages/api/**` of an `app/` project — Next routes both, and the undeclared half is the half that gets mistaken for a screen |
+| A failed replay ends the state, and retries an aborted `goto` first | taxonomy's `/login` lost the page to the GitHub OAuth button, and the `Sign Up` link queued behind it — the one edge to `/register` — was then clicked into a DOM that had moved on, timing out |
+| No capture beats a blank one | a white rectangle in the frame asserts the screen looks like that; the viewer already has an empty state, and `captureSkipped: "blank"` is a fact the canvas can show |
+| **Cap every settle wait** | `image.decode()` on an image that never loads never settles, and `.catch()` does not catch a hang. One slow avatar on Bluesky's feed hung the crawl forever — no capture, no diagnostic, no exit. A capped wait risks a slightly unsettled capture; an uncapped one risks no capture at all |
+| Detect the app package inside a monorepo | dub's root holds only build tooling, so `detect` said "unknown" and the whole run produced nothing |
+| Playwright serves `native` targets too | an Expo app got no renderer at all, though §4.4 names phone-viewport Playwright as the v1 answer for it |
 | Resolve a `.js` specifier to its `.ts`/`.tsx` source | `export { default } from './page.js'` resolved to nothing, so those screens had no component |
 | Split identifiers on camelCase before matching field names | `name="cardNumber"` with no label slipped past the payment refusal; `\bcard\b` does not match inside `cardNumber` |
 | The renderer resolves a control's kind in the page, not from an attribute | filling a `<select>` with `fill()` throws, and the whole form traversal dies one field in |
