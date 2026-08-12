@@ -5,7 +5,7 @@ import { FRAME_SIZE, type ScreenNodeData } from './graph.js';
 export function ScreenNode({ data, selected }: NodeProps): ReactElement {
   const node = data as ScreenNodeData;
   const size = FRAME_SIZE[node.frame];
-  const capture = node.active.capture;
+  const capture = node.state.capture;
 
   return (
     <div className="node" style={{ width: size.width }}>
@@ -25,11 +25,11 @@ export function ScreenNode({ data, selected }: NodeProps): ReactElement {
             <img src={capture.path} alt={node.title} draggable={false} />
           ) : (
             <div className="frame-empty">
-              {node.active.captureSkipped === 'privacy'
+              {node.state.captureSkipped === 'privacy'
                 ? 'not captured — privacy rule'
-                : node.active.captureSkipped === 'failed'
+                : node.state.captureSkipped === 'failed'
                   ? 'capture failed'
-                  : node.active.captureSkipped === 'blank'
+                  : node.state.captureSkipped === 'blank'
                     ? 'rendered nothing'
                     : 'the crawl has not run'}
             </div>
@@ -39,8 +39,7 @@ export function ScreenNode({ data, selected }: NodeProps): ReactElement {
 
       <div className="node-title">{node.title}</div>
       <div className="node-caption">
-        {node.inbound} in · {node.outbound} out · {node.active.personaId}
-        {node.variants.length > 1 ? ` +${node.variants.length - 1}` : ''}
+        {node.inbound} in · {node.outbound} out · {node.personaId}
       </div>
 
       <Handle type="target" position={Position.Left} />

@@ -1,11 +1,60 @@
 import ELK from 'elkjs/lib/elk.bundled.js';
 import type { Edge, Node } from '@xyflow/react';
+import type { GraphLane, LaneNodeData } from './graph.js';
 
 const elk = new ELK();
 
 /** §14 — the gap between depths carries the edge and its label; siblings only stack. */
 const GAP_X = 220;
 const GAP_Y = 48;
+
+/** Room for a lane's header, and the band of empty canvas that separates lanes. */
+const LANE_HEADER = 64;
+const LANE_GAP = 160;
+
+/**
+ * §14 — each persona is laid out on its own, then dropped below the last one.
+ * Laying the personas out together would let one persona's screens pull another
+ * persona's into a shared row, which reads as a relationship that is not there.
+ */
+export async function layoutLanes(lanes: GraphLane[]): Promise<Node[]> {
+  const labelled = lanes.length > 1;
+  const out: Node[] = [];
+  let top = 0;
+
+  for (const lane of lanes) {
+    const laid = await layoutGraph(lane.nodes, lane.edges);
+    const left = Math.min(...laid.map((node) => node.position.x));
+    const ceiling = Math.min(...laid.map((node) => node.position.y));
+    const height = Math.max(
+      ...laid.map((node) => node.position.y - ceiling + (node.height ?? 0)),
+    );
+    const offsetY = top + (labelled ? LANE_HEADER : 0);
+
+    if (labelled) {
+      const data: LaneNodeData = { personaId: lane.personaId, screens: lane.nodes.length };
+      out.push({
+        id: `lane::${lane.personaId}`,
+        type: 'lane',
+        position: { x: 0, y: top },
+        draggable: false,
+        selectable: false,
+        data,
+      });
+    }
+
+    for (const node of laid) {
+      out.push({
+        ...node,
+        position: { x: node.position.x - left, y: node.position.y - ceiling + offsetY },
+      });
+    }
+
+    top = offsetY + height + LANE_GAP;
+  }
+
+  return out;
+}
 
 /**
  * §14 — a tree layout, because every state is a consequence of the one before

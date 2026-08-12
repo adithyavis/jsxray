@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { JsxrayDocument, ScreenState } from '@jsxray/core';
 import type { Edge } from '@jsxray/core';
+import type { Node } from '@xyflow/react';
 import { eyebrowOf, titleOf, transitionOf } from '../src/document.js';
-import { FRAME_SIZE, buildGraph, findHiddenLinks } from '../src/graph.js';
-import { layoutGraph } from '../src/layout.js';
+import { FRAME_SIZE, buildGraph, findHiddenLinks, nodeId, type GraphLane } from '../src/graph.js';
+import { layoutGraph, layoutLanes } from '../src/layout.js';
 
 const state = (
   signature: string,
@@ -97,28 +98,59 @@ const document = {
   personas: [{ id: 'user', authenticated: true }],
 } as unknown as JsxrayDocument;
 
+const screenNodes = (graph: ReturnType<typeof buildGraph>): Node[] =>
+  graph.lanes.flatMap((lane) => lane.nodes);
+
 describe('graph', () => {
   it('draws runtime edges only', () => {
     const { edges } = buildGraph({ document, personaId: 'user', frame: 'browser' });
-    expect(edges.map((edge) => edge.id)).toEqual(['/->/settings', '/settings->/settings$rename-workspace']);
+    expect(edges.map((edge) => edge.id)).toEqual([
+      'user::/->/settings',
+      'user::/settings->/settings$rename-workspace',
+    ]);
   });
 
   it('makes one node per state, so an overlay is its own node', () => {
-    const { nodes } = buildGraph({ document, personaId: 'user', frame: 'browser' });
-    expect(nodes.map((node) => node.id).sort()).toEqual(
-      ['/', '/settings', '/settings$rename-workspace'].sort(),
+    const graph = buildGraph({ document, personaId: 'user', frame: 'browser' });
+    expect(screenNodes(graph).map((node) => node.id).sort()).toEqual(
+      ['user::/', 'user::/settings', 'user::/settings$rename-workspace'].sort(),
     );
   });
 
-  it('filters to one persona and merges variants otherwise', () => {
-    expect(buildGraph({ document, personaId: 'admin', frame: 'browser' }).nodes).toHaveLength(1);
+  it('filters to one persona', () => {
+    const graph = buildGraph({ document, personaId: 'admin', frame: 'browser' });
+    expect(graph.lanes.map((lane) => lane.personaId)).toEqual(['admin']);
+    expect(screenNodes(graph)).toHaveLength(1);
+  });
+
+  it('gives every persona its own lane rather than merging them', () => {
     const all = buildGraph({ document, personaId: null, frame: 'browser' });
-    expect(all.nodes.find((node) => node.id === '/')?.data).toMatchObject({ variants: expect.any(Array) });
+    expect(all.lanes.map((lane) => lane.personaId)).toEqual(['user', 'admin']);
+
+    // Both personas reached `/`. That is two nodes, each holding its own capture.
+    const home = screenNodes(all).filter((node) => node.id.endsWith('::/'));
+    expect(home.map((node) => node.id)).toEqual([nodeId('user', '/'), nodeId('admin', '/')]);
+    expect(new Set(home.map((node) => (node.data as { state: ScreenState }).state))).toHaveProperty(
+      'size',
+      2,
+    );
+  });
+
+  it('never draws an edge between two personas', () => {
+    const all = buildGraph({ document, personaId: null, frame: 'browser' });
+    for (const lane of all.lanes) {
+      const ours = new Set(lane.nodes.map((node) => node.id));
+      for (const edge of lane.edges) {
+        expect(ours.has(edge.source) && ours.has(edge.target)).toBe(true);
+      }
+    }
   });
 
   it('sizes every frame identically so a later capture shifts no layout', () => {
-    const { nodes } = buildGraph({ document, personaId: 'user', frame: 'phone' });
-    expect(new Set(nodes.map((node) => node.height))).toEqual(new Set([FRAME_SIZE.phone.height]));
+    const graph = buildGraph({ document, personaId: 'user', frame: 'phone' });
+    expect(new Set(screenNodes(graph).map((node) => node.height))).toEqual(
+      new Set([FRAME_SIZE.phone.height]),
+    );
   });
 });
 
@@ -165,8 +197,11 @@ describe('node anatomy', () => {
 });
 
 describe('layout', () => {
+  const laneOne = (): GraphLane =>
+    buildGraph({ document, personaId: 'user', frame: 'browser' }).lanes[0]!;
+
   it('positions every node without overlap', async () => {
-    const { nodes, edges } = buildGraph({ document, personaId: 'user', frame: 'browser' });
+    const { nodes, edges } = laneOne();
     const laid = await layoutGraph(nodes, edges);
 
     expect(laid).toHaveLength(3);
@@ -183,19 +218,55 @@ describe('layout', () => {
   });
 
   it('lays a tree out left to right', async () => {
-    const { nodes, edges } = buildGraph({ document, personaId: 'user', frame: 'browser' });
+    const { nodes, edges } = laneOne();
     const laid = await layoutGraph(nodes, edges);
     const byId = new Map(laid.map((node) => [node.id, node.position.x]));
-    expect(byId.get('/')!).toBeLessThan(byId.get('/settings')!);
-    expect(byId.get('/settings')!).toBeLessThan(byId.get('/settings$rename-workspace')!);
+    expect(byId.get('user::/')!).toBeLessThan(byId.get('user::/settings')!);
+    expect(byId.get('user::/settings')!).toBeLessThan(
+      byId.get('user::/settings$rename-workspace')!,
+    );
   });
 
   it('leaves room between depths for the edge and its label', async () => {
-    const { nodes, edges } = buildGraph({ document, personaId: 'user', frame: 'browser' });
+    const { nodes, edges } = laneOne();
     const laid = await layoutGraph(nodes, edges);
     const byId = new Map(laid.map((node) => [node.id, node.position.x]));
-    const gap = byId.get('/settings')! - byId.get('/')! - FRAME_SIZE.browser.width;
+    const gap = byId.get('user::/settings')! - byId.get('user::/')! - FRAME_SIZE.browser.width;
     expect(gap).toBeGreaterThanOrEqual(200);
+  });
+});
+
+describe('lanes', () => {
+  it('stacks each persona below the last, and heads it with the persona', async () => {
+    const graph = buildGraph({ document, personaId: null, frame: 'browser' });
+    const laid = await layoutLanes(graph.lanes);
+
+    expect(laid.filter((node) => node.type === 'lane').map((node) => node.id)).toEqual([
+      'lane::user',
+      'lane::admin',
+    ]);
+
+    const bottomOf = (personaId: string): number =>
+      Math.max(
+        ...laid
+          .filter((node) => node.id.startsWith(`${personaId}::`))
+          .map((node) => node.position.y + (node.height ?? 0)),
+      );
+    const topOf = (personaId: string): number =>
+      Math.min(
+        ...laid
+          .filter((node) => node.id.startsWith(`${personaId}::`))
+          .map((node) => node.position.y),
+      );
+
+    expect(bottomOf('user')).toBeLessThan(topOf('admin'));
+  });
+
+  it('heads nothing when only one persona is drawn', async () => {
+    const graph = buildGraph({ document, personaId: 'user', frame: 'browser' });
+    const laid = await layoutLanes(graph.lanes);
+    expect(laid.some((node) => node.type === 'lane')).toBe(false);
+    expect(laid).toHaveLength(3);
   });
 });
 
@@ -246,13 +317,13 @@ describe('cycles', () => {
 
   it('does not draw the link back to a screen already visited', () => {
     const graph = buildGraph({ document: cyclic, personaId: 'user', frame: 'browser' });
-    expect(graph.edges.map((edge) => edge.id)).toEqual(['/->/settings']);
+    expect(graph.edges.map((edge) => edge.id)).toEqual(['user::/->/settings']);
     expect(graph.hiddenLinks).toBe(1);
   });
 
   it('lays a cyclic graph out without hanging or overlapping', async () => {
-    const { nodes, edges } = buildGraph({ document: cyclic, personaId: 'user', frame: 'browser' });
-    const laid = await layoutGraph(nodes, edges);
+    const graph = buildGraph({ document: cyclic, personaId: 'user', frame: 'browser' });
+    const laid = await layoutLanes(graph.lanes);
     expect(laid).toHaveLength(2);
     for (const node of laid) {
       expect(Number.isFinite(node.position.x)).toBe(true);
@@ -283,7 +354,7 @@ describe('cycles', () => {
     const graph = buildGraph({ document: selfLoop, personaId: 'user', frame: 'browser' });
     expect(graph.edges).toHaveLength(0);
     expect(graph.hiddenLinks).toBe(1);
-    const laid = await layoutGraph(graph.nodes, graph.edges);
+    const laid = await layoutLanes(graph.lanes);
     expect(laid).toHaveLength(1);
     expect(Number.isFinite(laid[0]!.position.x)).toBe(true);
   });

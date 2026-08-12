@@ -805,7 +805,19 @@ presentation, not analysis:
 |---|---|
 | Eyebrow | first `meta.groups` entry — a Next route group is exactly this idea already, a grouping that never touches the URL — falling back to the parent path segment. Never the screen's own last segment, which would echo the title back as its own section. |
 | Title | canonical route, de-slugged and title-cased; a dynamic route becomes `<Words> Detail`; an entirely dynamic route (`/*slug`) is named after its parameter, which is what the author called it. `/` is `Home`. An overlay state is titled by its **last `$` segment** — the overlay's own accessible name, de-slugged — which is why §3.1 built identity from that name. |
-| Caption | the interaction count in and out, and the capture's persona. |
+| Caption | the interaction count in and out, and the capture's persona (its lane, §14). |
+
+**One persona, one lane.** The persona control filters to a single persona or shows them all, and
+"all" is **not a merge**. Each persona is built, laid out, and drawn as its own graph, stacked down
+the canvas under a header naming it. Two personas that both reached `/` are two nodes holding two
+captures, not one node with the other capture hidden behind it — the persona axis exists to show
+that difference, and merging is exactly what hides it. It also hides a failed login, which reads as
+a second logged-out persona whose nodes fold silently into the first (§7.5).
+
+Node ids are therefore lane-scoped: personas share screen signatures, and the signature alone no
+longer identifies a node. No edge ever crosses lanes, so each lane is laid out on its own —
+otherwise one persona's screens pull another's into a shared row, which reads as a relationship
+that is not there. A single lane gets no header; the control already names it.
 
 **Chrome** — dark ground; a dot grid whose spacing is fixed in screen space, so it does not
 scale with zoom; a vertical brand rail; square zoom controls bottom-left.
@@ -863,7 +875,9 @@ drawn — including the ones a nav bar produces out of every screen — is dense
 engine could oblige.
 
 **Inspector** — in v1: route facts, the steps that reached the state, outgoing confirmed
-transitions, and which personas reached it. The component tree, props, and design-system origin
+transitions **for that state's own persona**, and which personas reached the same screen. The
+selected node belongs to one lane, so listing every persona's transitions out of it would put back
+the merge the canvas just took out. The component tree, props, and design-system origin
 (product §7.1, rows 2–3) arrive with the v2 component graph.
 
 **Typing note.** React Flow node data must be indexable. Keep the fields in their own interface and

@@ -125,6 +125,28 @@ body {
   color: var(--ink-dim);
 }
 
+/* lanes — one per persona */
+.lane {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  white-space: nowrap;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.lane-persona {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--brand);
+}
+
+.lane-count {
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
 /* nodes */
 .node {
   font-size: 12px;
