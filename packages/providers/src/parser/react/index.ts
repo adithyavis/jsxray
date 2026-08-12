@@ -41,6 +41,32 @@ interface FileAnalysis {
   defaultFrom: string | null;
   starFrom: string[];
   named: Record<string, string>;
+  /** §11.2 — local binding → where it came from, for resolving a wrapper. */
+  imports: Record<string, ImportBinding>;
+  forwarders: ForwarderCandidate[];
+  pending: PendingIntent[];
+}
+
+interface ImportBinding {
+  specifier: string;
+  /** The name in the target module: a bare name, `default`, or `*`. */
+  imported: string;
+}
+
+/**
+ * §11.2 — `<LinkItem {...props}>` renders `<Link {...props}>`, so a target given
+ * to `LinkItem` reaches `Link` untouched. The wrapper is a link by composition,
+ * which is a fact about the code rather than a guess about its name.
+ */
+interface ForwarderCandidate {
+  component: string;
+  element: string;
+}
+
+/** A link-shaped element whose name is not yet known to be one. */
+interface PendingIntent {
+  element: string;
+  intent: NavIntent;
 }
 
 export const reactParser: ParserProvider = {
@@ -80,6 +106,7 @@ export const reactParser: ParserProvider = {
 
     const byAbsolute = new Map(analyses.map((analysis) => [analysis.absolute, analysis]));
     foldReExports(analyses, byAbsolute, context);
+    promoteForwardedIntents(analyses, byAbsolute, context, input.recognizers);
 
     return {
       components: analyses.flatMap((analysis) => analysis.components),
@@ -124,6 +151,68 @@ function foldReExports(
   }
 }
 
+/**
+ * §11.2 — a wrapper is a link when it spreads its props into one, so the set of
+ * link elements is a fixed point: `Link` seeds it, anything forwarding into a
+ * member of it joins it, and a pending intent promotes once its element is in.
+ */
+function promoteForwardedIntents(
+  analyses: FileAnalysis[],
+  byAbsolute: Map<string, FileAnalysis>,
+  context: Parameters<typeof resolveSpecifier>[2],
+  recognizers: NavRecognizers,
+): void {
+  const builtin = new Set(recognizers.linkProps.map((recognizer) => recognizer.element));
+  const links = new Set<string>();
+
+  /** A stable key for what an element name refers to, or null when unresolvable. */
+  const keyOf = (analysis: FileAnalysis, elementName: string): string | null => {
+    const [root, ...rest] = elementName.split('.');
+    if (!root) return null;
+    if (!rest.length && builtin.has(root)) return `builtin:${root}`;
+
+    const binding = analysis.imports[root];
+    if (!binding) return rest.length ? null : `${analysis.absolute}::${root}`;
+
+    const resolved = resolveSpecifier(binding.specifier, analysis.absolute, context);
+    if (resolved.kind !== 'file') return null;
+    const target = byAbsolute.get(resolved.file);
+    if (!target) return null;
+
+    // `* as NS` names the member; a named import names itself.
+    const name =
+      binding.imported === '*'
+        ? rest[0]
+        : binding.imported === 'default'
+          ? target.defaultComponentId?.split('#').pop()
+          : binding.imported;
+    if (!name) return null;
+    return `${target.absolute}::${target.named[name] ?? name}`;
+  };
+
+  for (let pass = 0; pass < REEXPORT_PASS_CAP; pass++) {
+    let changed = false;
+    for (const analysis of analyses) {
+      for (const candidate of analysis.forwarders) {
+        const self = `${analysis.absolute}::${candidate.component}`;
+        if (links.has(self)) continue;
+        const wraps = keyOf(analysis, candidate.element);
+        if (!wraps || !(wraps.startsWith('builtin:') || links.has(wraps))) continue;
+        links.add(self);
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+
+  for (const analysis of analyses) {
+    for (const pending of analysis.pending) {
+      const key = keyOf(analysis, pending.element);
+      if (key && links.has(key)) analysis.navIntents.push(pending.intent);
+    }
+  }
+}
+
 function analyzeFile(
   absolute: string,
   source: string,
@@ -146,6 +235,9 @@ function analyzeFile(
     defaultFrom: null,
     starFrom: [],
     named: {},
+    imports: {},
+    forwarders: [],
+    pending: [],
   };
 
   const locOf = (node: t.Node): SourceLoc => ({
@@ -183,6 +275,22 @@ function analyzeFile(
   };
 
   traverse(ast, {
+    ImportDeclaration(nodePath) {
+      const specifier = nodePath.node.source.value;
+      for (const imported of nodePath.node.specifiers) {
+        if (t.isImportNamespaceSpecifier(imported)) {
+          analysis.imports[imported.local.name] = { specifier, imported: '*' };
+        } else if (t.isImportDefaultSpecifier(imported)) {
+          analysis.imports[imported.local.name] = { specifier, imported: 'default' };
+        } else if (t.isImportSpecifier(imported)) {
+          analysis.imports[imported.local.name] = {
+            specifier,
+            imported: exportedName(imported.imported),
+          };
+        }
+      }
+    },
+
     ExportDefaultDeclaration(nodePath) {
       const resolved = resolveDefaultExport(nodePath.node.declaration, nodePath, absolute);
       if (!resolved) return;
@@ -245,8 +353,66 @@ function analyzeFile(
     },
   });
 
+  collectForwarders(ast, analysis);
   collectNavIntents(ast, source, recognizers, locOf, (node) => ownerOf(node, componentRanges), analysis);
   return analysis;
+}
+
+/**
+ * §11.2 — a component that spreads its own rest props into a single JSX element
+ * hands that element every prop it was given, target included. Record the pair;
+ * whether the inner element is a link is settled later, across files.
+ */
+function collectForwarders(ast: t.File, analysis: FileAnalysis): void {
+  const record = (name: string | undefined, fn: t.Function): void => {
+    if (!name || !isComponentName(name)) return;
+    const spread = spreadBindingOf(fn.params[0]);
+    if (!spread) return;
+    for (const element of elementsSpreading(fn, spread)) {
+      analysis.forwarders.push({ component: name, element });
+    }
+  };
+
+  traverse(ast, {
+    FunctionDeclaration(nodePath) {
+      record(nodePath.node.id?.name, nodePath.node);
+    },
+    VariableDeclarator(nodePath) {
+      const { id, init } = nodePath.node;
+      if (!t.isIdentifier(id) || !init) return;
+      const unwrapped = unwrapComponentWrapper(init);
+      if (!unwrapped || !t.isFunction(unwrapped.node)) return;
+      record(id.name, unwrapped.node);
+    },
+  });
+}
+
+/** `({...props})` or `(props)` — the binding that carries everything not named. */
+function spreadBindingOf(param: t.Node | undefined): string | null {
+  if (!param) return null;
+  if (t.isIdentifier(param)) return param.name;
+  if (!t.isObjectPattern(param)) return null;
+  for (const property of param.properties) {
+    if (t.isRestElement(property) && t.isIdentifier(property.argument)) {
+      return property.argument.name;
+    }
+  }
+  return null;
+}
+
+function elementsSpreading(fn: t.Function, binding: string): string[] {
+  const names: string[] = [];
+  t.traverseFast(fn as t.Node, (node) => {
+    if (!t.isJSXOpeningElement(node)) return;
+    const spreads = node.attributes.some(
+      (attribute) =>
+        t.isJSXSpreadAttribute(attribute) &&
+        t.isIdentifier(attribute.argument) &&
+        attribute.argument.name === binding,
+    );
+    if (spreads) names.push(jsxName(node.name));
+  });
+  return names;
 }
 
 interface ResolvedDefault {
@@ -369,27 +535,37 @@ function collectNavIntents(
   traverse(ast, {
     JSXOpeningElement(nodePath) {
       const elementName = jsxName(nodePath.node.name);
-      const matches = recognizers.linkProps.filter(
+      const known = recognizers.linkProps.some(
         (recognizer) => recognizer.element === elementName,
       );
-      if (!matches.length) return;
 
-      for (const recognizer of matches) {
+      // An unrecognized element carrying a link prop is only a candidate: it is
+      // a link if it forwards into one, which takes every file to decide (§11.2).
+      const props = new Set(
+        recognizers.linkProps
+          .filter((recognizer) => !known || recognizer.element === elementName)
+          .map((recognizer) => recognizer.prop),
+      );
+
+      for (const prop of props) {
         const attribute = nodePath.node.attributes.find(
           (candidate): candidate is t.JSXAttribute =>
-            t.isJSXAttribute(candidate) && jsxName(candidate.name) === recognizer.prop,
+            t.isJSXAttribute(candidate) && jsxName(candidate.name) === prop,
         );
         if (!attribute) continue;
 
         const parent = nodePath.parentPath.node;
-        analysis.navIntents.push({
+        const intent: NavIntent = {
           kind: 'link',
           target: literalOfAttribute(attribute),
           targetExpression: expressionOfAttribute(attribute, textOf),
           trigger: t.isJSXElement(parent) ? jsxText(parent) : null,
           componentId: ownerOf(nodePath.node),
           loc: locOf(nodePath.node),
-        });
+        };
+
+        if (known) analysis.navIntents.push(intent);
+        else analysis.pending.push({ element: elementName, intent });
       }
     },
 

@@ -684,6 +684,33 @@ Two shapes need care because they are where a literal target is absent:
   and leaves `target` null. Reconstructing the route is the router's job, not the parser's, and
   usually the crawl answers it first.
 
+**Links by composition.** A recognizer names `Link`, but almost no app writes `Link` at the call
+site — it writes its own row, item, or card, and that wrapper spreads its props into a `Link`.
+Matching the recognizer's element name alone therefore misses most of an app's navigation: on
+Bluesky it saw 96 bare `Link` uses and missed 35 `SettingsList.LinkItem` ones, so a settings page
+full of links looked like a page with none.
+
+So a component is **also** a link element when its body spreads its own rest binding into one:
+
+```tsx
+export function LinkItem({children, ...props}) {   // `to` is in props, untouched
+  return <Link {...props}>…</Link>                 // and reaches Link
+}
+```
+
+This is a fact about the code, not a guess about the name — `InlineLinkText` takes `to` and calls a
+hook with it, forwards nothing, and is correctly not matched. The set of link elements is a fixed
+point: the recognizers seed it, a component spreading into a member joins it, and the rule composes
+through wrappers of wrappers. Resolution is cross-file and follows namespace, named, and default
+imports, so `<SettingsList.LinkItem to="…">` resolves to the `LinkItem` in that module.
+
+An element carrying a link prop whose name is not yet known is held **pending** rather than
+emitted: whether it is a link cannot be decided until every file has been read.
+
+What this does **not** reach is a wrapper that destructures the target and passes it on by hand, or
+one that routes through a hook. Those need the recognizers to name them, which is the router
+provider's job (§4.1).
+
 ### 11.3 Guards *(v2)*
 
 `{cond && <X/>}`, `||`/`??` fallbacks, both ternary branches, and if/else early returns, each with
