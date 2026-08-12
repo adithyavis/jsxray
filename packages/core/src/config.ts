@@ -56,7 +56,8 @@ export interface IgnoreRules {
 
 export interface Bounds {
   maxDepth?: number;
-  maxStates?: number;
+  /** States the **walk** may add; seeds and flows are free (§8). `null` lifts the ceiling. */
+  maxStates?: number | null;
   actionCap?: number;
   timeoutMs?: number;
 }
@@ -126,7 +127,7 @@ export function resolveConfig(config: JsxrayConfig, configFile: string | null): 
     channel: config.channel ?? null,
     bounds: {
       maxDepth: config.bounds?.maxDepth ?? 4,
-      maxStates: config.bounds?.maxStates ?? 120,
+      maxStates: config.bounds?.maxStates === undefined ? 120 : config.bounds.maxStates,
       actionCap: config.bounds?.actionCap ?? 12,
       timeoutMs: config.bounds?.timeoutMs ?? 10 * 60_000,
     },

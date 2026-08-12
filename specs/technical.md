@@ -533,6 +533,18 @@ what the inspector shows a reader.
 truncates emits a diagnostic**, so a partial crawl never reads as a complete one — the honesty
 rule that governs the canvas, applied to the numbers behind it.
 
+**`maxStates` bounds the walk, not the seeding.** Phase 2 visits the declared route table, which
+is the app's own and finite before the crawl starts; phase 3 follows links, and that is the part
+with no natural end. Charging both to one counter meant an app with more declared routes than the
+bound spent the whole budget on `goto` and never clicked anything — 51 of 60 on Bluesky, leaving a
+canvas of unlinked nodes that read as an app with no navigation. Flows are free for the same
+reason: the author named them, so they are not discovery.
+
+Seeding is therefore stopped only by the wall clock. `maxStates: null` lifts the walk's ceiling
+too, which is honest on an app whose reachable state set is finite and a trap on one whose is not:
+a route taking a concrete param, or an overlay named after content, mints a new signature for
+every post. The clock is the backstop that always holds.
+
 ### 7.6 Session drop
 
 **Only when there is a session to drop.** A persona with no `login` is a first-class persona — the

@@ -275,7 +275,8 @@ class PersonaCrawl {
 
   constructor(private readonly input: PersonaCrawlInput) {
     this.deadline = Date.now() + input.config.bounds.timeoutMs;
-    this.stateBudget = input.config.bounds.maxStates;
+    // §8 — null is "no ceiling"; the deadline is then the only stop.
+    this.stateBudget = input.config.bounds.maxStates ?? Number.POSITIVE_INFINITY;
   }
 
   async run(session: RendererSession, auth: AuthProvider | null, authenticated: boolean) {
@@ -301,7 +302,7 @@ class PersonaCrawl {
         }
         let previous = await this.observe(session);
         if (this.discardHandlerLanding(previous, `flow "${flow.id}"`)) continue;
-        let previousState = await this.record(session, previous, [...steps], 0);
+        let previousState = await this.record(session, previous, [...steps], 0, 'free');
 
         for (const step of flow.steps) {
           const recorded = await this.perform(session, step);
@@ -309,7 +310,13 @@ class PersonaCrawl {
           const next = await this.observe(session);
           if (this.discardHandlerLanding(next, `flow "${flow.id}"`)) break;
           if (next.signature === previous.signature) continue;
-          const nextState = await this.record(session, next, [...steps], previousState.depth + 1);
+          const nextState = await this.record(
+            session,
+            next,
+            [...steps],
+            previousState.depth + 1,
+            'free',
+          );
           this.addEdge(previousState, nextState, labelOfStep(step), 'action');
           previous = next;
           previousState = nextState;
@@ -342,14 +349,14 @@ class PersonaCrawl {
 
     for (const route of unique([...config.seedRoutes, ...declared])) {
       if (guard.blocksNavigation(route)) continue;
-      if (!this.hasBudget()) return;
+      if (!this.beforeDeadline()) return;
       try {
         await session.goto(route);
         await session.settle();
         const observation = await this.observe(session);
         if (this.discardHandlerLanding(observation, route)) continue;
         if (this.visited.has(observation.signature)) continue;
-        await this.record(session, observation, [{ kind: 'goto', target: route }], 0);
+        await this.record(session, observation, [{ kind: 'goto', target: route }], 0, 'free');
       } catch (error) {
         diagnostics.push({
           level: 'warn',
@@ -586,6 +593,7 @@ class PersonaCrawl {
     observation: Observation,
     reachedVia: Step[],
     depth: number,
+    spend: 'budget' | 'free' = 'budget',
   ): Promise<ScreenState> {
     const existing = this.input.states.find(
       (state) =>
@@ -611,7 +619,10 @@ class PersonaCrawl {
     await this.capture(session, state);
     this.input.states.push(state);
     this.visited.add(state.signature);
-    this.stateBudget--;
+    // §8 — the declared route table is finite and the app's own, so seeding it
+    // is not what `maxStates` is for. Spending the walk's budget on it starves
+    // the interaction walk on any app with more routes than the bound.
+    if (spend === 'budget') this.stateBudget--;
     this.frontier.push(state);
     this.input.log(`  ${this.input.persona.id}  ${state.signature}`);
     return state;
@@ -748,7 +759,11 @@ class PersonaCrawl {
   }
 
   private hasBudget(): boolean {
-    return this.stateBudget > 0 && Date.now() < this.deadline;
+    return this.stateBudget > 0 && this.beforeDeadline();
+  }
+
+  private beforeDeadline(): boolean {
+    return Date.now() < this.deadline;
   }
 }
 
