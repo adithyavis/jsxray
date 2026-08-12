@@ -189,7 +189,7 @@ Selection is by `supports` then `priority`.
 | Axis | Interface highlights | v1 | v2 |
 |---|---|---|---|
 | **Parser** | `parse(files, recognizers) → {components, navIntents, fileExports}` | `react` | `vue`; `buildTree()` |
-| **Router** | `enumerate() → {screens, edges}`, `recognizers`, `navEdges(screens, intents)` | `next` (app + pages), `tanstack-router`, `react-router` (file mode) | `expo-router`, `vue-router`, `react-navigation`, `react-router` (code mode) |
+| **Router** | `enumerate() → {screens, edges}`, `recognizers`, `navEdges(screens, intents)` | `next` (app + pages), `tanstack-router`, `react-router` (file + config mode), `react-navigation` | `expo-router`, `vue-router` |
 | **Renderer** | `launch(baseUrl) → session · goto(target) · settle · fingerprint · overlays · screenshot · clickables · forms · tap · fill · freeze · session` | `playwright` | `native` — Appium or Maestro (§4.4); `elementBoxes` |
 | **Auth** | `login(session, credentials, loginFlow)`, `isLoggedIn?` | `username-password` | firebase / amplify / jwt |
 
@@ -284,14 +284,19 @@ The set is finite and named. Everything else is detected, reported, and degraded
 | `next-app`, `next-pages` | file | v1 — the anchor |
 | `tanstack-router` | generated → file | v1 — `routeTree.gen.ts` is authoritative, which makes this nearly free, and it is what covers Vite |
 | `react-router` (framework mode) | file | v1 — the largest install base, and its file convention is deterministic |
-| `react-router` (`createBrowserRouter`) | config | v2 — the first user of the `config` strategy |
+| `react-router` (`createBrowserRouter`, v5 `<Route>`) | config | v1 — the first user of the `config` strategy (§13.1) |
+| `react-navigation` | config | v1 — name-based routes and no URLs; the hardest of the set (§13.2) |
 | `expo-router` | file | v2 — the same convention family as Next, but it wants the native renderer to be worth much |
 | `vue-router`, Nuxt | file / config | v2 — needs the Vue parser first |
-| `react-navigation` | config | v2 — name-based routes and no URLs; the hardest of the set |
 
-Three v1 routers rather than one, because they cost very little together: Next and react-router
+Five v1 routers rather than one. The first three cost very little together: Next and react-router
 file mode are the same kind of directory walk, and TanStack hands over a generated route tree that
-needs no convention-guessing at all.
+needs no convention-guessing at all. The two config routers cost considerably more — they read
+route tables out of source — but the alternative was worse than a thinner map. A config router that
+is merely *detected* leaves the crawl inferring route patterns from visited URLs, and inference
+gets them wrong in a way that is invisible: Bluesky's eight custom feeds came back as eight screens
+because `/profile/:name/feed/:rkey` was never declared to jsxray, while sitting in the app's own
+source the whole time.
 
 **Degrading when nothing applies.** `detect` still names the router it found, `enumerate` skips
 with a diagnostic naming both the detection and the supported set, and the run continues. That
@@ -774,12 +779,74 @@ Segment semantics, isolated for unit testing:
 Pages Router: the filename is the last segment; `index` maps to its directory;
 `_app`/`_document`/`_error` are not screens; `pages/api/**` are route handlers.
 
+**Both routers at once.** Next serves `app/` and `pages/` together, so an App Router project
+enumerates its sibling `pages/` tree as well, App Router winning any collision. The half that
+detection did not name is still routed, and an undeclared route is one the crawl cannot recognize.
+
 Layouts are collected from the router root down to the page, outermost first. Route handlers get
 no navigation edges and are never crawled — they render no UI.
 
 **A dynamic route needs a concrete param to be visited.** The crawl gets one from a named flow, or
 from a link it traversed to reach the route. A `/tx/:id` that is never linked to and never named
 in a flow stays unreached, and is reported as unreached rather than guessed at.
+
+### 13.1 Router rules (react-router, config mode)
+
+A config tree is read out of source, so the rules are about *what counts as a route declaration*
+and what to do with syntax jsxray has no concept of.
+
+Two shapes are recognized, and one app often has both:
+
+| Shape | Example |
+|---|---|
+| Route object in an array | `{ path: ROUTES.LOGIN, Component: Login, children: [...] }` |
+| JSX element | `<Route path="/login" component={Login}/>` |
+
+- **A path is resolved through module constants, not just literals.** `path: ROUTES.SIGN_UP`
+  against a `constants/routes` module is the dominant way a large app writes its table; reading
+  only string literals sees a route table of nothing.
+- **Any element whose name ends in `Route` is a route.** Wrapping `Route` in a guard —
+  `<HFRoute>`, `<LoggedInRoute>`, `<PrivateRoute>` — is *the* v5 idiom. Matching only the bare
+  element finds half an app and reports no error for the other half.
+- **Nesting joins, absolute children do not.** A v6 child path joins onto its parent; a v5 child
+  writes the full path and is taken as-is. `index: true` resolves to its parent's path.
+- **Three pieces of syntax have nowhere to go.** A query string is dropped (`/alerts?tab=Channels`
+  is one route with a query); a v5 regex constraint is dropped (`/:team(\w+)` → `/:team`); an
+  optional param is recorded as **required** (`/help/:page?` → `/help/:page`), because §3 has no
+  optional-parameter form and the alternative is losing the route entirely.
+- **A computed path is counted, not guessed.** `` path={`${product.baseURL}/public`} `` is reported
+  through `computed-route-path` and contributes no screen.
+- **The component is followed through the barrel.** A route points at
+  `export const Page = lazy(() => import('…'))` far more often than at a component directly, and
+  stopping at the barrel gives every screen in the app the same file, no component, and — since
+  edge attribution walks up from the screen's directory — no candidate edges at all.
+
+### 13.2 Router rules (react-navigation)
+
+React Navigation routes are **names**, and a path exists only where the app declared one for deep
+linking. What `enumerate` returns is therefore the *linkable* surface, not every screen: a screen
+registered with no path is reported through `unlinkable-screens` and has no URL to visit.
+
+Paths come from either shape:
+
+| Shape | Example |
+|---|---|
+| Linking config | `linking.config.screens = { Messages: { path: 'messages', screens: { Inbox: 'inbox' } } }` |
+| Flat path map | `new Router({ Profile: '/profile/:name', Home: ['/', '/download'] })` |
+
+- **Nested `screens` are read once, from the outermost tree.** A nested map walked again on its own
+  yields the same screens a second time with the parent prefix missing.
+- **A path map is only a route table where it is used as one.** An object of path-shaped strings is
+  accepted when it is passed to a `*Router` constructor or bound to a name like `routes`/`linking`,
+  and otherwise ignored — an API endpoint map is the same shape and would invent screens.
+- **One screen may answer to several paths.** The first declared is the primary route; the rest are
+  aliases pointing at the same component.
+- **`navigate('Details')` is resolved through the name table.** This is the §4.1 boundary at its
+  sharpest: the parser records a target of `Details`, which matches no route, and only the router
+  knows the linking config that turns it into `/details/:id`. Without this step a React Navigation
+  app produces a full route manifest and not one candidate edge.
+- **The screen's component is a named export.** `<Stack.Screen name="Profile" component={Profile}/>`
+  names it outright, and React Native screens are named exports far more often than default ones.
 
 ## 14. Viewer
 
@@ -971,13 +1038,26 @@ history — the consequence column is why.
 | Resolve a `.js` specifier to its `.ts`/`.tsx` source | `export { default } from './page.js'` resolved to nothing, so those screens had no component |
 | Split identifiers on camelCase before matching field names | `name="cardNumber"` with no label slipped past the payment refusal; `\bcard\b` does not match inside `cardNumber` |
 | The renderer resolves a control's kind in the page, not from an attribute | filling a `<select>` with `fill()` throws, and the whole form traversal dies one field in |
+| Resolve a route path through module constants | SigNoz writes every path as `ROUTES.X`; literals alone found 0 of its 74 routes |
+| Treat any `*Route` element as a route | Mattermost declares 13 of ~30 routes as `<HFRoute>` / `<LoggedInRoute>`; the bare-element match found 17 routes and 0 edges |
+| Follow a lazy barrel to the defining module | SigNoz's 68 screens all resolved to one `pageComponents.ts`, so no screen owned a component and directory attribution collapsed to a single folder |
+| Dynamic import is `ImportExpression` on Babel 8 | the Babel 7 `CallExpression` + `Import` callee shape silently matches nothing, and every lazy route keeps the barrel as its file |
+| Read a nested `screens` map only from the outermost tree | the inner map is walked twice, and the second pass emits `/inbox` beside the correct `/messages/inbox` |
+| A screen's component may be a named export | React Native almost never default-exports a screen; Bluesky's 74 screens had a file and no component |
+| Hold after settling before capturing | Bluesky's feed is laid out, fonts ready, images decoded, and entirely grey rows for another second — every capture of it was a screenshot of the loading state, filed as the screen |
+| An edge label is the transition, not the button text | Bluesky's controls are sentences ("View this user's verifications"), and the canvas drew lines longer than the nodes they joined |
+| Freeze the clock at run start, not at a constant in the past | a hardcoded `2020-01-01` threw during hydration on every TanStack Start page — 59 of 105 captured nothing, and each was blamed on the app as `blank-render` |
 
 ## 18. Known limits
 
-- Config-defined route trees (`react-router`'s `createBrowserRouter`, `react-navigation`, TanStack
-  in code mode) are detected but not parsed in v1. Generated and file-based route trees were the
-  deterministic win; the `config` discovery strategy (§4) is declared so a provider can add one
-  without a redesign.
+- A config route tree is read as far as its paths are *statically* knowable. react-router and
+  react-navigation are parsed in v1 (§13.1, §13.2); TanStack in code mode is not. Within those two,
+  a path assembled at runtime — from a plugin registry, a product's `baseURL`, a template with an
+  expression in it — cannot be read, and is counted through `computed-route-path` rather than
+  guessed at. Mattermost declares 31 such paths, which is the shape of the remaining gap: config
+  mode is a floor on what can be recovered, never the guarantee a file convention gives.
+- A react-navigation screen with no declared path has no URL, so it is enumerated only as far as
+  `unlinkable-screens` counts it. Deep-link paths are the only route identity that library has.
 - Routers outside the §4.3 set are detected and reported, never analyzed, and there is no plugin
   interface to add one. The crawl still runs from `seedRoutes`; coverage reports `null`.
 - A dynamic route never linked to and never named in a flow stays unreached. jsxray reports it
