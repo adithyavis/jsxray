@@ -268,6 +268,8 @@ export interface JsxrayDocument {
   root: string;
   framework: FrameworkProfile | null;
   providers: SelectedProviders;
+  /** §14 — where the reader enters the app, and the only root the canvas draws from. */
+  seedRoutes: string[];
   components: ComponentRecord[];
   navIntents: NavIntent[];
   screens: Screen[];
@@ -287,6 +289,7 @@ export function emptyDocument(root: string, version: string): JsxrayDocument {
     root,
     framework: null,
     providers: { parser: null, router: null, renderer: null, auth: null },
+    seedRoutes: [],
     components: [],
     navIntents: [],
     screens: [],

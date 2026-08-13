@@ -88,6 +88,7 @@ typechecked separately (Vite does not typecheck).
 |---|---|---|---|
 | `framework` | detect | stack profile — a matrix, with `evidence` | v1 |
 | `providers` | pipeline | which provider served each of the four axes | v1 |
+| `seedRoutes` | config | where the run entered the app, and the only root the canvas draws from (§14) | v1 |
 | `components` | parse | id, name, file, source location; `isPage` marks the ones a router can mount | v1 |
 | `navIntents` | parse | source facts in the author's terms, before the router turns them into edges (§4.1) | v1 |
 | `components[].renders/guards/props` | parse | the full component graph | v2 |
@@ -1010,6 +1011,19 @@ use for that screen. The control's own words are a fact and are not lost — the
 `edge.label` in the document, in the inspector's transition list, and in `--list`. Only the line
 is renamed, which is the same split as eyebrow, title, and caption above.
 
+**The roots are `config.seedRoutes`, and nothing else.** The breadth-first search that thins the
+lines starts there, because that is where the reader enters the app and where the run entered it.
+Rooting instead at "a node with no line into it" — the obvious reading of *root* — inverts the map
+on any app with a nav bar: the entry screen is linked to from everywhere, so it is never eligible,
+while a dead end nothing links to is crowned and the entry screen is drawn hanging beneath it. On
+Bluesky that made `/support` the root and Home its child.
+
+A seed the crawl never landed on contributes no root. If no seed is on the canvas at all, the
+search falls back to nodes with nothing pointing into them, and then to any node still unvisited —
+each island needs one starting point to be drawn at all. **Islands are the honest outcome of a
+screen the crawl reached by URL and never by a click**: nothing in the data says where it hangs,
+and §7.1 forbids inventing the line. The number of them is a crawl result, not a layout choice.
+
 **One line in per screen — the shortest way there, found breadth-first.** Given both
 `/ → /welcome → /dashboard` and `/ → /dashboard`, the canvas draws only the second: `/dashboard`
 is one hop from `/` and two hops the other way. Everything else — longer ways in, links back to a
@@ -1129,6 +1143,7 @@ the smoke harness finds the ones we did not — every item in §17.2 came from i
 | **Tree layout, not stacked variants** | every state is a consequence of the one before it, so variants are siblings and one rule places every fan-out |
 | **An edge is named for the transition, not for the control** | an accessible name is written to be read next to the control; on a line it is longer than the node and names where the reader already is |
 | **Capture holds before the shutter** | `settle()` cannot tell a finished screen from a skeleton, and a grey approximation of the layout reads as a real screen |
+| **The canvas roots at the seeds** | the entry screen is linked to from everywhere, so any in-degree rule crowns a dead end and hangs the entry screen under it |
 | **A click must be topmost, not merely visible** | the collector's three checks pass for a control under a modal backdrop, and the crawl spends the action cap proving it |
 | **`loginFlow` is data for the auth provider** | one call site (`auth.login`) rather than two mechanisms that can disagree |
 | **Static analysis is crawl guidance** | it earns its keep as the checklist and the planner's hints, not as canvas output |
@@ -1180,6 +1195,7 @@ history — the consequence column is why.
 | Freeze the clock at run start, not at a constant in the past | a hardcoded `2020-01-01` threw during hydration on every TanStack Start page — 59 of 105 captured nothing, and each was blamed on the app as `blank-render` |
 | Park the pointer before pressing | the pointer rests where it last clicked, Bluesky opens a hover card there, and the card covers the next nav item: 226 of 233 failed actions were an interception, and 87 of them were `Home` and `Explore` |
 | An overlay state acts only inside its overlay | the modal backdrop caught 85 clicks aimed at the nav bar behind it, each a full timeout out of a cap of 10, so the dialog's own controls were never reached |
+| Root the canvas at `seedRoutes` | Home had 11 lines in and `/support` none, so the in-degree rule made a support page the root of Bluesky and drew Home as its child |
 
 ## 18. Known limits
 

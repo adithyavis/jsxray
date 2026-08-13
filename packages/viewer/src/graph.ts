@@ -141,7 +141,7 @@ function buildLane(
     );
   }
 
-  const hidden = findHiddenLinks(order);
+  const hidden = findHiddenLinks(order, seedsOf(document, bySignature));
   const edges: Edge[] = [];
 
   for (const pair of order) {
@@ -202,7 +202,16 @@ function splitPair(pair: string): [string, string] {
   return [pair.slice(0, at), pair.slice(at + 2)];
 }
 
-export function findHiddenLinks(pairs: readonly string[]): Set<string> {
+/**
+ * §14 — the reader enters the app where the run entered it, so a seed route is
+ * the root. A seed the crawl never landed on contributes nothing.
+ */
+function seedsOf(document: JsxrayDocument, states: Map<string, ScreenState>): string[] {
+  const seeds = document.seedRoutes?.length ? document.seedRoutes : ['/'];
+  return seeds.filter((route) => states.has(route));
+}
+
+export function findHiddenLinks(pairs: readonly string[], seeds: readonly string[] = []): Set<string> {
   const outgoing = new Map<string, string[]>();
   const nodes: string[] = [];
   const seenNode = new Set<string>();
@@ -228,8 +237,16 @@ export function findHiddenLinks(pairs: readonly string[]): Set<string> {
     queue.push(node);
   };
 
-  for (const node of nodes) {
-    if (!hasIncoming.has(node)) enqueue(node);
+  // §14 — the seeds are the roots. A node with no way in is not a root: on any app
+  // with a nav bar the entry screen has a line into it from everywhere, so rooting
+  // by in-degree crowns a dead end and hangs the entry screen underneath it.
+  for (const seed of seeds) {
+    if (seenNode.has(seed)) enqueue(seed);
+  }
+  if (!visited.size) {
+    for (const node of nodes) {
+      if (!hasIncoming.has(node)) enqueue(node);
+    }
   }
 
   let head = 0;
@@ -243,7 +260,7 @@ export function findHiddenLinks(pairs: readonly string[]): Set<string> {
         kept.add(pair);
       }
     }
-    // A cycle with no way in, or a separate island, still needs a starting point.
+    // An island the seeds cannot reach still needs a starting point of its own.
     const orphan = nodes.find((node) => !visited.has(node));
     if (orphan === undefined) break;
     enqueue(orphan);

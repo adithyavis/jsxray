@@ -360,6 +360,33 @@ describe('cycles', () => {
   });
 });
 
+describe('findHiddenLinks roots at the seed', () => {
+  // The Bluesky shape: a seeded dead end links to Home, and Home is linked to from
+  // everywhere. By in-degree the dead end is the root and Home hangs under it.
+  const pairs = ['/support->/', '/support->/search', '/->/feeds', '/feeds->/'];
+
+  it('keeps the seed on top even though the app links back to it', () => {
+    const hidden = findHiddenLinks(pairs, ['/']);
+    const drawn = pairs.filter((pair) => !hidden.has(pair));
+    expect(drawn).toContain('/->/feeds');
+    expect(drawn).not.toContain('/support->/');
+  });
+
+  it('falls back to in-degree when no seed is on the canvas', () => {
+    const hidden = findHiddenLinks(pairs, ['/never-crawled']);
+    expect(pairs.filter((pair) => !hidden.has(pair))).toContain('/support->/');
+  });
+
+  it('takes the seeds from the document', () => {
+    const seeded = { ...document, seedRoutes: ['/settings'] } as unknown as JsxrayDocument;
+    const { lanes } = buildGraph({ document: seeded, personaId: 'user', frame: 'browser' });
+    // `/ -> /settings` is dropped: /settings is the root, so it needs no line in.
+    expect(lanes[0]!.edges.map((edge) => edge.id)).toEqual([
+      'user::/settings->/settings$rename-workspace',
+    ]);
+  });
+});
+
 describe('findHiddenLinks', () => {
   it('draws the short way in, not the long one', () => {
     const hidden = findHiddenLinks([
