@@ -264,6 +264,26 @@ interface PersonaCrawlInput {
   log(message: string): void;
 }
 
+/** TEMP — timing trace for the long-run investigation. `JSXRAY_TRACE=1` turns it on. */
+const TRACE = Boolean(process.env.JSXRAY_TRACE);
+const TRACE_START = Date.now();
+
+function trace(message: string): void {
+  if (!TRACE) return;
+  const at = ((Date.now() - TRACE_START) / 1000).toFixed(1).padStart(7);
+  process.stderr.write(`[trace ${at}s] ${message}\n`);
+}
+
+async function timed<T>(label: string, run: () => Promise<T>): Promise<T> {
+  if (!TRACE) return run();
+  const at = Date.now();
+  try {
+    return await run();
+  } finally {
+    trace(`${label} — ${Date.now() - at}ms`);
+  }
+}
+
 class PersonaCrawl {
   private readonly visited = new Set<string>();
   private readonly frontier: ScreenState[] = [];
@@ -280,9 +300,13 @@ class PersonaCrawl {
   }
 
   async run(session: RendererSession, auth: AuthProvider | null, authenticated: boolean) {
+    trace(`persona ${this.input.persona.id}: flows`);
     await this.runFlows(session);
+    trace(`persona ${this.input.persona.id}: seeds`);
     await this.runSeeds(session);
+    trace(`persona ${this.input.persona.id}: walk, frontier ${this.frontier.length}`);
     await this.runWalk(session, auth, authenticated);
+    trace(`persona ${this.input.persona.id}: done, ${this.input.states.length} states`);
   }
 
   /** Phase 1 — named flows reach gated states reliably. */
@@ -351,12 +375,16 @@ class PersonaCrawl {
       if (guard.blocksNavigation(route)) continue;
       if (!this.beforeDeadline()) return;
       try {
-        await session.goto(route);
-        await session.settle();
-        const observation = await this.observe(session);
+        await timed(`seed goto ${route}`, async () => {
+          await session.goto(route);
+          await session.settle();
+        });
+        const observation = await timed(`seed observe ${route}`, () => this.observe(session));
         if (this.discardHandlerLanding(observation, route)) continue;
         if (this.visited.has(observation.signature)) continue;
-        await this.record(session, observation, [{ kind: 'goto', target: route }], 0, 'free');
+        await timed(`seed record ${route}`, () =>
+          this.record(session, observation, [{ kind: 'goto', target: route }], 0, 'free'),
+        );
       } catch (error) {
         diagnostics.push({
           level: 'warn',
@@ -388,6 +416,10 @@ class PersonaCrawl {
       }
 
       const state = this.frontier.shift()!;
+      trace(
+        `state ${state.signature} depth=${state.depth} steps=${state.reachedVia.length} ` +
+          `frontier=${this.frontier.length} budget=${this.stateBudget} states=${this.input.states.length}`,
+      );
       if (state.depth >= config.bounds.maxDepth) continue;
       if (guard.blocksActions(state.route)) continue;
 
@@ -398,15 +430,21 @@ class PersonaCrawl {
         }
       }
 
-      if (!(await this.reEstablish(session, state))) continue;
+      if (
+        !(await timed(`  reEstablish ${state.signature}`, () => this.reEstablish(session, state)))
+      )
+        continue;
 
-      const actions = actionsWithinOverlay(
-        state,
-        guard.filterActions<Clickable | FormGroup>([
-          ...(await session.clickables()),
-          ...(await session.forms()),
-        ]),
-      ).slice(0, config.bounds.actionCap);
+      const actions = await timed(`  collect ${state.signature}`, async () =>
+        actionsWithinOverlay(
+          state,
+          guard.filterActions<Clickable | FormGroup>([
+            ...(await session.clickables()),
+            ...(await session.forms()),
+          ]),
+        ).slice(0, config.bounds.actionCap),
+      );
+      trace(`  ${actions.length} actions on ${state.signature}`);
 
       for (const [index, action] of actions.entries()) {
         if (!this.hasBudget()) return;
@@ -421,20 +459,28 @@ class PersonaCrawl {
           continue;
         }
 
-        const before = await this.observe(session);
-        const performed = await this.attempt(session, action);
+        const label = labelOf(action) ?? action.ref;
+        const before = await timed(`    observe before "${label}"`, () => this.observe(session));
+        const performed = await timed(`    act "${label}"`, () => this.attempt(session, action));
         if (!performed.length) {
-          if (!(await this.resume(session, state, actions.length - index - 1))) break;
+          trace(`    "${label}" failed`);
+          if (
+            !(await timed(`    resume after "${label}"`, () =>
+              this.resume(session, state, actions.length - index - 1),
+            ))
+          )
+            break;
           continue;
         }
 
-        let after = await this.observe(session);
+        let after = await timed(`    observe after "${label}"`, () => this.observe(session));
         if (unchanged(before, after) && mayStillNavigate(action, before.route)) {
           // Confirm before scoring it dead: a transition may not have committed yet.
           await session.settle();
           after = await this.observe(session);
         }
         if (unchanged(before, after)) {
+          trace(`    "${label}" dead`);
           this.recordDeadAction(state, action);
           continue;
         }
@@ -457,9 +503,18 @@ class PersonaCrawl {
         }
 
         const steps = [...state.reachedVia, ...performed];
-        const next = await this.record(session, after, steps, state.depth + 1);
+        const known = this.visited.has(after.signature);
+        const next = await timed(`    record ${after.signature}`, () =>
+          this.record(session, after, steps, state.depth + 1),
+        );
+        trace(`    "${label}" -> ${after.signature}${known ? ' (known)' : ' (NEW)'}`);
         this.addEdge(state, next, labelOf(action), 'form' in action ? 'form' : 'action');
-        if (!(await this.resume(session, state, actions.length - index - 1))) break;
+        if (
+          !(await timed(`    resume after "${label}"`, () =>
+            this.resume(session, state, actions.length - index - 1),
+          ))
+        )
+          break;
       }
     }
   }
@@ -527,10 +582,12 @@ class PersonaCrawl {
   private async reEstablish(session: RendererSession, state: ScreenState): Promise<boolean> {
     try {
       for (const step of state.reachedVia) {
-        if (step.kind === 'goto') await session.goto(step.target);
-        else if (step.kind === 'fill') await session.fill(step.target, step.value ?? '');
-        else await session.tap(step.target);
-        await session.settle();
+        await timed(`      replay ${step.kind} ${step.target}`, async () => {
+          if (step.kind === 'goto') await session.goto(step.target);
+          else if (step.kind === 'fill') await session.fill(step.target, step.value ?? '');
+          else await session.tap(step.target);
+          await session.settle();
+        });
       }
       if (!state.reachedVia.length) {
         await session.goto(state.url);
@@ -636,7 +693,7 @@ class PersonaCrawl {
       return;
     }
 
-    await this.hold(session);
+    await timed(`      hold ${state.signature}`, () => this.hold(session));
 
     if (!(await session.hasContent())) {
       state.captureSkipped = 'blank';
@@ -649,7 +706,7 @@ class PersonaCrawl {
       return;
     }
     try {
-      const bytes = await session.screenshot();
+      const bytes = await timed(`      screenshot ${state.signature}`, () => session.screenshot());
       const file = path.join(
         this.input.outDir,
         ASSET_DIRNAME,
