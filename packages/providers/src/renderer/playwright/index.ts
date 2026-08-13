@@ -38,8 +38,14 @@ interface PlaywrightContext {
   addCookies(cookies: unknown[]): Promise<void>;
 }
 
+/** Halved, so a blocked click plus its retry costs what one click cost before. */
+const TAP_TIMEOUT = 2_500;
+const PARK_MS = 200;
+const INTERCEPTED = /intercepts pointer events/;
+
 interface PlaywrightPage {
   goto(url: string, options?: unknown): Promise<unknown>;
+  mouse: { move(x: number, y: number): Promise<void> };
   url(): string;
   waitForLoadState(state: string, options?: unknown): Promise<void>;
   evaluate<T>(fn: string, arg?: unknown): Promise<T>;
@@ -188,7 +194,7 @@ class PlaywrightSession implements RendererSession {
   }
 
   async tap(ref: string): Promise<void> {
-    await this.page.locator(ref).first().click({ timeout: 5_000 });
+    await click(this.page, this.page.locator(ref).first(), this.viewport);
   }
 
   async fill(ref: string, value: string): Promise<void> {
@@ -240,9 +246,48 @@ export async function navigate(page: Navigable, url: string): Promise<void> {
   await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
 }
 
+export interface Pointer {
+  mouse: { move(x: number, y: number): Promise<void> };
+  evaluate<T>(fn: string, arg?: unknown): Promise<T>;
+}
+
+export interface ClickTarget {
+  click(options?: unknown): Promise<void>;
+}
+
+/**
+ * §7.3 — a click leaves the pointer parked on what it hit, and an app that opens a
+ * hover card there covers the next control with it. So park the pointer in the corner
+ * first, and read an interception as one more reason to park rather than a dead action.
+ */
+export async function click(
+  page: Pointer,
+  target: ClickTarget,
+  viewport: { width: number; height: number },
+): Promise<void> {
+  const park = async (): Promise<void> => {
+    await page.mouse.move(viewport.width - 1, viewport.height - 1);
+    // A hover card closes on its own delay, so give it one before pressing.
+    await page.evaluate<void>(`new Promise((resolve) => setTimeout(resolve, ${PARK_MS}))`);
+  };
+
+  await park();
+  try {
+    await target.click({ timeout: TAP_TIMEOUT });
+  } catch (error) {
+    if (!INTERCEPTED.test(messageOf(error))) throw error;
+    await park();
+    await target.click({ timeout: TAP_TIMEOUT });
+  }
+}
+
 /** Chromium's name for "someone else navigated first" — a race, not a dead page. */
 function isAbortedNavigation(error: unknown): boolean {
   return error instanceof Error && error.message.includes('net::ERR_ABORTED');
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function hash(value: string): string {

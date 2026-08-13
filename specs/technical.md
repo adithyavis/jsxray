@@ -625,6 +625,20 @@ anyway or waits out the budget on a screen that was already done. And it changes
 `observe()` still reads url, overlays, and fingerprint before the hold, so what the hold can
 change is the picture, never the graph.
 
+### 7.11 A click lands only where the page can receive it
+
+A click is a press at a point on screen, so what matters is not whether the control is *visible*
+but whether it is **topmost** at that point. Playwright refuses a press that another element would
+receive, waits out the timeout, and reports `intercepts pointer events`. Two layers cause that,
+and both are the crawl's own doing.
+
+**The pointer stays where the last click left it.** An app that opens a hover card under a resting
+pointer then covers whatever sits beside it, and the next click is aimed into the card. On Bluesky
+this cost `Home` and `Explore` — the two controls that join everything to everything — 87 of their
+attempts in one run. So the pointer is parked in a corner of the viewport before every press, and
+an interception buys one more park and one more press before the action is scored failed. The tap
+timeout is halved to **2.5s** so the blocked case still costs what one attempt used to.
+
 ## 8. Determinism
 
 Freezing is a **precondition of capture**, not a post-process. It is what makes two runs diffable,
@@ -1102,6 +1116,7 @@ the smoke harness finds the ones we did not — every item in §17.2 came from i
 | **Tree layout, not stacked variants** | every state is a consequence of the one before it, so variants are siblings and one rule places every fan-out |
 | **An edge is named for the transition, not for the control** | an accessible name is written to be read next to the control; on a line it is longer than the node and names where the reader already is |
 | **Capture holds before the shutter** | `settle()` cannot tell a finished screen from a skeleton, and a grey approximation of the layout reads as a real screen |
+| **A click must be topmost, not merely visible** | the collector's three checks pass for a control under a modal backdrop, and the crawl spends the action cap proving it |
 | **`loginFlow` is data for the auth provider** | one call site (`auth.login`) rather than two mechanisms that can disagree |
 | **Static analysis is crawl guidance** | it earns its keep as the checklist and the planner's hints, not as canvas output |
 | **Capture or an explicit empty state** | a wireframe is a second thing to build and maintain that no reader asked for |
@@ -1150,6 +1165,7 @@ history — the consequence column is why.
 | Hold after settling before capturing | Bluesky's feed is laid out, fonts ready, images decoded, and entirely grey rows for another second — every capture of it was a screenshot of the loading state, filed as the screen |
 | An edge label is the transition, not the button text | Bluesky's controls are sentences ("View this user's verifications"), and the canvas drew lines longer than the nodes they joined |
 | Freeze the clock at run start, not at a constant in the past | a hardcoded `2020-01-01` threw during hydration on every TanStack Start page — 59 of 105 captured nothing, and each was blamed on the app as `blank-render` |
+| Park the pointer before pressing | the pointer rests where it last clicked, Bluesky opens a hover card there, and the card covers the next nav item: 226 of 233 failed actions were an interception, and 87 of them were `Home` and `Explore` |
 
 ## 18. Known limits
 
