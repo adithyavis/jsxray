@@ -400,12 +400,13 @@ class PersonaCrawl {
 
       if (!(await this.reEstablish(session, state))) continue;
 
-      const actions = guard
-        .filterActions<Clickable | FormGroup>([
+      const actions = actionsWithinOverlay(
+        state,
+        guard.filterActions<Clickable | FormGroup>([
           ...(await session.clickables()),
           ...(await session.forms()),
-        ])
-        .slice(0, config.bounds.actionCap);
+        ]),
+      ).slice(0, config.bounds.actionCap);
 
       for (const [index, action] of actions.entries()) {
         if (!this.hasBudget()) return;
@@ -786,6 +787,23 @@ function clearCaptures(outDir: string, personaId: string): void {
 
 function isForm(action: Clickable | FormGroup): action is FormGroup {
   return 'controls' in action;
+}
+
+/**
+ * §7.3 — a modal's backdrop swallows every click meant for the page behind it, so
+ * on an overlay state the page below is not actionable, and each control there
+ * costs the action cap a timeout. Kept permissive: an overlay whose contents are
+ * not recognized as inside it (§3.1's inert-background case) keeps its actions.
+ */
+function actionsWithinOverlay<T extends Clickable | FormGroup>(
+  state: ScreenState,
+  actions: T[],
+): T[] {
+  if (!state.overlays.length) return actions;
+  const inside = actions.filter((action) =>
+    isForm(action) ? (action.submit?.inOverlay ?? false) : action.inOverlay,
+  );
+  return inside.length ? inside : actions;
 }
 
 function labelOf(action: Clickable | FormGroup): string | null {

@@ -456,7 +456,10 @@ for each persona P:
     (state, depth) ← frontier.pop()
     if depth ≥ maxDepth or match(state.route, ignore.actions): continue
     reEstablish(state)
-    for action in guard.filter(clickables() ∪ forms())[:actionCap]:   # drops ignore.navigation
+    actions ← guard.filter(clickables() ∪ forms())                    # drops ignore.navigation
+    if state.overlays and any(a.inOverlay for a in actions):          # §7.11 — the rest is
+      actions ← [a for a in actions if a.inOverlay]                   # behind the backdrop
+    for action in actions[:actionCap]:
       before ← (url, overlays, fingerprint)
       perform(action); settle()
       if (url, overlays, fingerprint) == before: record dead action; continue
@@ -638,6 +641,16 @@ this cost `Home` and `Explore` — the two controls that join everything to ever
 attempts in one run. So the pointer is parked in a corner of the viewport before every press, and
 an interception buys one more park and one more press before the action is scored failed. The tap
 timeout is halved to **2.5s** so the blocked case still costs what one attempt used to.
+
+**A modal's backdrop covers the page behind it.** On an overlay state the crawl collects actions
+from the whole document, and every control behind the dialog passes the collector's test — it has
+a box, it is not hidden, it is not transparent — while being unreachable by a press. Each one then
+spends the action cap on a timeout, and the dialog's own controls, the ones that make real edges,
+are never reached. So **an overlay state acts only inside its overlay**. Where nothing is
+recognized as inside it — §3.1's inert-background case names no subtree — the whole page stays
+actionable, because half a rule is worse than the old behaviour.
+
+Both are the same mistake: reading "the browser can see it" as "a person could click it".
 
 ## 8. Determinism
 
@@ -1166,6 +1179,7 @@ history — the consequence column is why.
 | An edge label is the transition, not the button text | Bluesky's controls are sentences ("View this user's verifications"), and the canvas drew lines longer than the nodes they joined |
 | Freeze the clock at run start, not at a constant in the past | a hardcoded `2020-01-01` threw during hydration on every TanStack Start page — 59 of 105 captured nothing, and each was blamed on the app as `blank-render` |
 | Park the pointer before pressing | the pointer rests where it last clicked, Bluesky opens a hover card there, and the card covers the next nav item: 226 of 233 failed actions were an interception, and 87 of them were `Home` and `Explore` |
+| An overlay state acts only inside its overlay | the modal backdrop caught 85 clicks aimed at the nav bar behind it, each a full timeout out of a cap of 10, so the dialog's own controls were never reached |
 
 ## 18. Known limits
 
