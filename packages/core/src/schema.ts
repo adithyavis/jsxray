@@ -208,6 +208,34 @@ export interface DeadAction {
   target: string | null;
 }
 
+/** §7.5 — why an action on this screen was never performed. */
+export type UntriedReason =
+  | 'cap'
+  | 'budget'
+  | 'known-target'
+  | 'unreachable'
+  | 'ignored'
+  | (string & {});
+
+export interface UntriedAction {
+  label: string | null;
+  target: string | null;
+  reason: UntriedReason;
+}
+
+/**
+ * §7.8 — what the capture is a picture of. `ok` and `loading` both hold a file;
+ * the rest hold none, and each says a different thing about why.
+ */
+export type CaptureStatus =
+  | 'ok'
+  | 'loading'
+  | 'blank'
+  | 'privacy'
+  | 'failed'
+  | 'not-run'
+  | (string & {});
+
 export interface ScreenState {
   signature: string;
   screenId: string;
@@ -216,9 +244,11 @@ export interface ScreenState {
   personaId: string;
   overlays: OverlayRef[];
   capture: Capture | null;
-  captureSkipped: 'privacy' | 'not-run' | 'failed' | 'blank' | null;
+  captureStatus: CaptureStatus;
   reachedVia: Step[];
   deadActions: DeadAction[];
+  /** §7.5 — actions seen on this screen and never performed, with the reason. */
+  untriedActions: UntriedAction[];
   fingerprint: string;
   depth: number;
 }
