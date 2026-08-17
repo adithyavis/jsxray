@@ -6,7 +6,13 @@ import { resolveConfig } from '../src/config.js';
 import type { RendererProvider, RendererSession } from '../src/providers.js';
 import { emptyDocument, type CrawlOutput } from '../src/index.js';
 import { crawl } from '../src/stages/crawl.js';
-import type { Clickable, FormGroup, Overlay, SessionState } from '../src/runtime.js';
+import type {
+  Clickable,
+  FormGroup,
+  Overlay,
+  RenderStatus,
+  SessionState,
+} from '../src/runtime.js';
 
 const BASE = 'http://localhost:9997';
 
@@ -41,7 +47,7 @@ class StubSession implements RendererSession {
 
   async freeze(): Promise<void> {}
   async goto(target: string): Promise<void> {
-    this.current = target;
+    this.current = target.startsWith(BASE) ? target.slice(BASE.length) : target;
     this.open = false;
   }
   async settle(): Promise<void> {}
@@ -51,8 +57,8 @@ class StubSession implements RendererSession {
   async fingerprint(): Promise<string> {
     return `${this.current}${this.open ? '-open' : ''}`;
   }
-  async hasContent(): Promise<boolean> {
-    return true;
+  async renderStatus(): Promise<RenderStatus> {
+    return 'ok';
   }
   async overlays(): Promise<Overlay[]> {
     return this.open

@@ -6,14 +6,20 @@ import { resolveConfig } from '../src/config.js';
 import type { RendererProvider, RendererSession } from '../src/providers.js';
 import { emptyDocument, type CrawlOutput } from '../src/index.js';
 import { crawl } from '../src/stages/crawl.js';
-import type { Clickable, FormGroup, Overlay, SessionState } from '../src/runtime.js';
+import type {
+  Clickable,
+  FormGroup,
+  Overlay,
+  RenderStatus,
+  SessionState,
+} from '../src/runtime.js';
 
 const BASE = 'http://localhost:9999';
 
 /** Two links, and the first of them navigates away — the taxonomy `/login` shape. */
 const PAGES: Record<string, Clickable[]> = {
   '/login': [
-    { ref: '#github', label: 'Github', target: null, role: 'button', inOverlay: false },
+    { ref: '#github', label: 'Github', target: '/oauth', role: 'link', inOverlay: false },
     { ref: '#signup', label: 'Sign Up', target: '/register', role: 'link', inOverlay: false },
   ],
   '/oauth': [],
@@ -41,7 +47,7 @@ class StubSession implements RendererSession {
 
   async goto(target: string): Promise<void> {
     if (this.broken) throw new Error('page.goto: net::ERR_ABORTED');
-    this.current = target;
+    this.current = target.startsWith(BASE) ? target.slice(BASE.length) : target;
   }
 
   async settle(): Promise<void> {}
@@ -51,8 +57,8 @@ class StubSession implements RendererSession {
   async fingerprint(): Promise<string> {
     return this.current;
   }
-  async hasContent(): Promise<boolean> {
-    return true;
+  async renderStatus(): Promise<RenderStatus> {
+    return 'ok';
   }
   async overlays(): Promise<Overlay[]> {
     return [];

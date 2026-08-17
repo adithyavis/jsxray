@@ -30,7 +30,8 @@ const state = (
         deviceScaleFactor: 1,
       }
     : null,
-  captureSkipped: captured ? null : 'privacy',
+  captureStatus: captured ? 'ok' : 'privacy',
+  untriedActions: [],
   reachedVia: [{ kind: 'goto', target: route }],
   deadActions: [],
   fingerprint: 'abc',

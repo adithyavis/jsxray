@@ -120,7 +120,7 @@ describe('crawl', () => {
     const secrets = document.states.find((state) => state.route === '/secrets');
     expect(secrets).toBeDefined();
     expect(secrets?.capture).toBeNull();
-    expect(secrets?.captureSkipped).toBe('privacy');
+    expect(secrets?.captureStatus).toBe('privacy');
   });
 
   it('never makes a screen of a route handler, linked or redirected to', () => {
@@ -136,7 +136,7 @@ describe('crawl', () => {
     const blank = document.states.find((state) => state.route === '/blank');
     expect(blank).toBeDefined();
     expect(blank?.capture).toBeNull();
-    expect(blank?.captureSkipped).toBe('blank');
+    expect(blank?.captureStatus).toBe('blank');
     expect(document.diagnostics.some((diagnostic) => diagnostic.code === 'blank-render')).toBe(true);
   });
 
