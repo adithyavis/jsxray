@@ -1,4 +1,4 @@
-import type { JsxrayDocument, Screen, ScreenState } from '@jsxray/core';
+import type { Edge, JsxrayDocument, OverlayRef, Screen, ScreenState } from '@jsxray/core';
 
 declare global {
   interface Window {
@@ -52,6 +52,45 @@ export function titleOf(signature: string): string {
     return parent ? `${deSlug(parent)} Detail` : `${deSlug(last.slice(1))} Detail`;
   }
   return deSlug(last);
+}
+
+/** How long a fallback label may be before it stops being a label (§14). */
+const LABEL_LIMIT = 40;
+
+/**
+ * §14 — the drawn edge names the **transition**, not the words on the control.
+ * "View this user's verifications" is a sentence; `/profile/:name/verified` is
+ * where it goes. The control's own words stay in the document and the inspector.
+ */
+export function transitionOf(from: ScreenState, to: ScreenState, edge: Edge): string {
+  if (from.screenId !== to.screenId) return `Navigate to ${to.route}`;
+
+  const opened = to.overlays.filter((overlay) => !holds(from.overlays, overlay));
+  if (opened.length) return `Open the ${overlayWords(opened[opened.length - 1]!)}`;
+
+  const closed = from.overlays.filter((overlay) => !holds(to.overlays, overlay));
+  if (closed.length) return `Close the ${overlayWords(closed[closed.length - 1]!)}`;
+
+  const label = edge.label ? shorten(edge.label) : null;
+  if (edge.kind === 'form') return label ? `Submit ${label}` : 'Submit the form';
+  return label ?? edge.kind;
+}
+
+function holds(overlays: readonly OverlayRef[], overlay: OverlayRef): boolean {
+  return overlays.some((candidate) => candidate.name === overlay.name);
+}
+
+/** An unnamed overlay is known only by its role, which is still what it is. */
+function overlayWords(overlay: OverlayRef): string {
+  const noun = overlay.role === 'alertdialog' ? 'dialog' : overlay.role || 'overlay';
+  if (HASH_NAME.test(overlay.name)) return noun;
+  const words = overlay.name.replace(/[-_]+/g, ' ').trim().toLowerCase();
+  return words.endsWith(noun) ? words : `${words} ${noun}`;
+}
+
+function shorten(value: string): string {
+  const text = value.replace(/\s+/g, ' ').trim();
+  return text.length > LABEL_LIMIT ? `${text.slice(0, LABEL_LIMIT - 1).trimEnd()}…` : text;
 }
 
 export function deSlug(value: string): string {

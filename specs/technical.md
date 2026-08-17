@@ -88,6 +88,7 @@ typechecked separately (Vite does not typecheck).
 |---|---|---|---|
 | `framework` | detect | stack profile — a matrix, with `evidence` | v1 |
 | `providers` | pipeline | which provider served each of the four axes | v1 |
+| `seedRoutes` | config | where the run entered the app, and the only root the canvas draws from (§14) | v1 |
 | `components` | parse | id, name, file, source location; `isPage` marks the ones a router can mount | v1 |
 | `navIntents` | parse | source facts in the author's terms, before the router turns them into edges (§4.1) | v1 |
 | `components[].renders/guards/props` | parse | the full component graph | v2 |
@@ -97,6 +98,8 @@ typechecked separately (Vite does not typecheck).
 | `personas` | config | declared roles | v1 |
 | `states` | crawl | observed screen states, per persona, with captures and the renderer that produced them | v1 |
 | `states[].deadActions` | crawl | interactions that changed nothing — recorded once, never retried, never an edge | v1 |
+| `states[].untriedActions` | crawl | interactions offered and never performed, with the reason (§7.5) | v1 |
+| `states[].captureStatus` | crawl | what the frame is a picture of — `ok`, `loading`, `blank`, `privacy`, `failed`, `not-run` (§7.8) | v1 |
 | `coverage` | pipeline | reached ÷ declared and confirmed ÷ matchable, plus the unmatchable count (§5.1), per persona | v1 |
 | `diagnostics` | all | levelled, stage-tagged, with source locations | v1 |
 | `stages` | pipeline | which stages actually ran | v1 |
@@ -189,7 +192,7 @@ Selection is by `supports` then `priority`.
 | Axis | Interface highlights | v1 | v2 |
 |---|---|---|---|
 | **Parser** | `parse(files, recognizers) → {components, navIntents, fileExports}` | `react` | `vue`; `buildTree()` |
-| **Router** | `enumerate() → {screens, edges}`, `recognizers`, `navEdges(screens, intents)` | `next` (app + pages), `tanstack-router`, `react-router` (file mode) | `expo-router`, `vue-router`, `react-navigation`, `react-router` (code mode) |
+| **Router** | `enumerate() → {screens, edges}`, `recognizers`, `navEdges(screens, intents)` | `next` (app + pages), `tanstack-router`, `react-router` (file + config mode), `react-navigation` | `expo-router`, `vue-router` |
 | **Renderer** | `launch(baseUrl) → session · goto(target) · settle · fingerprint · overlays · screenshot · clickables · forms · tap · fill · freeze · session` | `playwright` | `native` — Appium or Maestro (§4.4); `elementBoxes` |
 | **Auth** | `login(session, credentials, loginFlow)`, `isLoggedIn?` | `username-password` | firebase / amplify / jwt |
 
@@ -284,14 +287,19 @@ The set is finite and named. Everything else is detected, reported, and degraded
 | `next-app`, `next-pages` | file | v1 — the anchor |
 | `tanstack-router` | generated → file | v1 — `routeTree.gen.ts` is authoritative, which makes this nearly free, and it is what covers Vite |
 | `react-router` (framework mode) | file | v1 — the largest install base, and its file convention is deterministic |
-| `react-router` (`createBrowserRouter`) | config | v2 — the first user of the `config` strategy |
+| `react-router` (`createBrowserRouter`, v5 `<Route>`) | config | v1 — the first user of the `config` strategy (§13.1) |
+| `react-navigation` | config | v1 — name-based routes and no URLs; the hardest of the set (§13.2) |
 | `expo-router` | file | v2 — the same convention family as Next, but it wants the native renderer to be worth much |
 | `vue-router`, Nuxt | file / config | v2 — needs the Vue parser first |
-| `react-navigation` | config | v2 — name-based routes and no URLs; the hardest of the set |
 
-Three v1 routers rather than one, because they cost very little together: Next and react-router
+Five v1 routers rather than one. The first three cost very little together: Next and react-router
 file mode are the same kind of directory walk, and TanStack hands over a generated route tree that
-needs no convention-guessing at all.
+needs no convention-guessing at all. The two config routers cost considerably more — they read
+route tables out of source — but the alternative was worse than a thinner map. A config router that
+is merely *detected* leaves the crawl inferring route patterns from visited URLs, and inference
+gets them wrong in a way that is invisible: Bluesky's eight custom feeds came back as eight screens
+because `/profile/:name/feed/:rkey` was never declared to jsxray, while sitting in the app's own
+source the whole time.
 
 **Degrading when nothing applies.** `detect` still names the router it found, `enumerate` skips
 with a diagnostic naming both the detection and the supported set, and the run continues. That
@@ -422,8 +430,12 @@ reloads — a freeze applied after it has already missed the values the app read
 
 ```
 visit(state) =                                        # one place, so no rule is skippable
-  if match(state.route, ignore.screenshots): state.capture ← null       # privacy
-  else:                                    state.capture ← screenshot()
+  if match(state.route, ignore.screenshots): state.captureStatus ← "privacy"
+  status ← renderStatus()                             # §7.10 — read the screen first
+  while status = "loading" and holds < 3:             # only a skeleton pays the hold
+    wait(config.capture.delayMs); settle(); status ← renderStatus()
+  if status = "blank":                       state.captureStatus ← "blank"     # §7.8
+  else:      state.capture ← screenshot();   state.captureStatus ← status      # ok | loading
   return state
 
 for each persona P:
@@ -440,7 +452,8 @@ for each persona P:
 
   # Phase 2 — seeds: config.seedRoutes ∪ declared page routes
   for each route ∉ ignore.navigation:
-    goto(route); state ← observe()                    # a node, not an edge
+    goto(route, first ? load : history)               # §7.4 — the app boots once
+    state ← observe()                                 # a node, not an edge
     if state.signature ∈ visited: continue            # Phase 1 already has it
     visit(state); visited.add(state.signature); frontier.push(state, 0)
 
@@ -449,17 +462,27 @@ for each persona P:
     (state, depth) ← frontier.pop()
     if depth ≥ maxDepth or match(state.route, ignore.actions): continue
     reEstablish(state)
-    for action in guard.filter(clickables() ∪ forms())[:actionCap]:   # drops ignore.navigation
+    actions ← guard.filter(clickables() ∪ forms())                    # drops ignore.navigation
+    if state.overlays and any(a.inOverlay for a in actions):          # §7.11 — the rest is
+      actions ← [a for a in actions if a.inOverlay]                   # behind the backdrop
+    actions ← oneLinkPerScreen(actions)               # §7.12 — a feed's rows are one action
+    actions ← orderByWhatTheyTeach(actions)           # §7.12 — unseen route, then button, then seen
+    note untried(actions[actionCap:], "cap")          # §7.5
+    for action in actions[:actionCap]:
+      if edge (state.screen → target screen) already drawn:   # §7.12
+        note untried(action, "known-target"); continue
       before ← (url, overlays, fingerprint)
       perform(action); settle()
       if (url, overlays, fingerprint) == before: record dead action; continue
       next ← observe()
+      if next.route is a declared route handler:      # §7.9 — not a screen at all
+        diagnostic; reEstablish(state); continue      # no capture, no edge, no frontier entry
       if match(next.route, ignore.navigation):        # a redirect landed us somewhere banned
         diagnostic; reEstablish(state); continue      # no capture, no edge, no frontier entry
       visit(next)
       recordRuntimeEdge(state → next, label = action)
       if next.signature ∉ visited: visited.add(next.signature); frontier.push(next, depth+1)
-      reEstablish(state)
+      if not reEstablish(state): note untried(rest, "unreachable"); break
 ```
 
 `observe()` reads url, overlays, and fingerprint — it never captures. Capture is `visit()`'s job
@@ -520,18 +543,73 @@ The payment refusal is a hard built-in, not a default the user can relax. A requ
 synthesizable value and no config override skips the form with a diagnostic, rather than
 submitting something half-filled.
 
-### 7.4 Backtracking by replay, not history
+### 7.4 Backtracking by the shortest way back
 
-Browser back is unreliable in SPAs — it may restore a route without restoring the state that made
-it interesting. Re-reach a state by `goto` on its URL plus replaying the `reachedVia` step prefix
-that produced it. Every state therefore stores the ordered steps that reached it, which is also
-what the inspector shows a reader.
+An SPA boots once. Rebooting it to see a screen it is already holding is the single most expensive
+thing the crawl used to do — a third of a measured run went on it ([performance](performance.md)
+§1). So backtracking climbs four rungs and stops at the first that works:
+
+| Rung | Costs | Handles |
+|---|---|---|
+| **Already there** — `observe()` and compare | ~10ms | the screen an action did not move away from |
+| **History** — `pushState` + `popstate`, the move the app's own links make | ~0.3s | a route change inside the booted app |
+| **Load** — `goto` the state's URL | ~0.5s | a router that ignores `popstate`, and a stale overlay the URL cannot close |
+| **Replay** — the whole `reachedVia` chain from the front door | seconds | a state no URL rebuilds: a form's landing page, a redirect |
+
+Every state stores both: the ordered `reachedVia` steps, which is what the inspector shows a
+reader and what the last rung replays; and, internally, the **restore tail** — the steps its URL
+alone cannot reproduce. An action that moved the URL has an empty tail, because the URL is the
+whole story. An action that did not moved something inside the page — an overlay — and that is
+what gets re-tapped on arrival.
+
+**Where the crawl is, is a URL and a set of overlays, not a signature.** Route patterns are learned
+as the walk goes (§3), so a state recorded before its pattern existed carries a name the crawl has
+since stopped using. Comparing signatures there reports a drift that did not happen and pays for a
+replay nobody needed.
+
+**Failing to get back ends the state.** Every action still queued was found in a DOM the crawl has
+left, and its ref is a path into that DOM: fired from anywhere else they miss, or worse, hit
+whatever happens to sit at the same path and record a transition nobody made. One OAuth button that
+navigates away is enough to lose the page. The untried actions are recorded with the reason
+`unreachable` — they are not dead, they were never reached (§7.5).
+
+**A navigation cancelled mid-flight is retried once.** Chromium aborts a `goto` that arrives while
+another navigation is in progress, which is exactly the moment a backtrack lands after an action
+that navigated. The page is healthy and the request lost a race, so wait for the one in front and
+ask again. Only then is the state given up.
 
 ### 7.5 Bounds
 
 `maxDepth`, `maxStates`, a per-state action cap, and a wall-clock budget. **Every bound that
 truncates emits a diagnostic**, so a partial crawl never reads as a complete one — the honesty
 rule that governs the canvas, applied to the numbers behind it.
+
+**`maxStates` bounds the walk, not the seeding.** Phase 2 visits the declared route table, which
+is the app's own and finite before the crawl starts; phase 3 follows links, and that is the part
+with no natural end. Charging both to one counter meant an app with more declared routes than the
+bound spent the whole budget on `goto` and never clicked anything — 51 of 60 on Bluesky, leaving a
+canvas of unlinked nodes that read as an app with no navigation. Flows are free for the same
+reason: the author named them, so they are not discovery.
+
+Seeding is therefore stopped only by the wall clock. `maxStates: null` lifts the walk's ceiling
+too, which is honest on an app whose reachable state set is finite and a trap on one whose is not:
+a route taking a concrete param, or an overlay named after content, mints a new signature for
+every post. The clock is the backstop that always holds.
+
+**Every action a screen offered and never got is written down.** `states[].untriedActions` holds
+the label, the target, and the reason:
+
+| Reason | What it means |
+|---|---|
+| `cap` | past `actionCap` — the screen has more to offer than the bound allows |
+| `budget` | `maxStates` or the clock ran out mid-screen |
+| `known-target` | the map already holds that screen and a line into it from here (§7.12) |
+| `unreachable` | the crawl could not get back to the screen, so the rest went untried (§7.4) |
+| `ignored` | `ignore.navigation` covers the target, or it is a route handler (§7.9) |
+
+Without it, "this screen was exhausted" and "this screen ran out of budget" look identical on the
+canvas, and the second is the one a reader has to know about. It is also the honest denominator
+for coverage: interactions seen but never taken ([revyl](revyl.md) §7).
 
 ### 7.6 Session drop
 
@@ -554,6 +632,160 @@ static side of product §9 — annotating each element with the `{isAdmin && …
 — arrives with the component graph in v2. The persona toggle is honest either way, because
 "unreached by this persona" is a fact the crawl establishes on its own.
 
+### 7.8 What the capture is a picture of
+
+Every state carries `captureStatus`, and it is the frame's own account of itself:
+
+| Status | File | Means |
+|---|---|---|
+| `ok` | yes | the screen |
+| `loading` | yes | a skeleton that was still there after the holds (§7.10) — captured, and flagged as what it is |
+| `blank` | no | the body painted nothing |
+| `privacy` | no | `ignore.screenshots` covers the route (§9) |
+| `failed` | no | the screenshot itself threw |
+| `not-run` | no | the crawl did not reach this state's capture |
+
+A screenshot of a page that painted nothing — an error shell, a redirect that resolved to nothing,
+a route whose data never arrived — is a white rectangle asserting that the screen looks like that.
+The state is still real and stays in the document; the capture becomes `blank` plus a `warn`, and
+the viewer draws the empty state it already has. §14's honesty rule applied to the frame: no
+capture says less than a blank one, and less is the true amount.
+
+A render counts as blank when the body paints no text and no mark — no image, canvas, media,
+control, or background image. A canvas-only app is the known false positive, and it costs a
+diagnostic rather than a node.
+
+A two-value `captured / skipped` could not say `loading`, which is the case that hurts most: a
+grey approximation of the real layout reads as a real screen. The taxonomy is
+[expo-map](expo-map.md) §3's, narrowed to what the crawl can establish on its own — `empty-state`
+and `not-found` need to read the words on the screen, and guessing them would be worse than saying
+`ok`.
+
+### 7.9 A route handler is not a screen
+
+§13 declares them, so the crawl can recognize one: URLs are canonicalized against **every**
+declared route, page or not, and a landing on a route handler is discarded with a diagnostic — no
+capture, no node, no edge — wherever it came from, seed, flow, or traversal. A link pointing at
+one is not followed at all. Without this, an app that redirects a failed sign-in to
+`/api/auth/error` gets that response filed under whichever page route matched it — a catch-all
+`/[...slug]`, usually — and screenshotted as that screen.
+
+### 7.10 Wait for the screen, not for the network and not for the clock
+
+A page has stopped moving long before it has anything on it. Three different things used to be
+waited on here, and only one of them was the screen:
+
+- **`networkidle` on every navigation.** A live app never lets the network go quiet, so the wait
+  ran to its 5-second cap every time and bought nothing. Gone.
+- **A quiet DOM.** An SPA goes quiet for a moment between its shell and its first paint. Read
+  there, the page is a splash with nothing on it to press — and the walk finds no actions and
+  calls the screen a dead end. Read one pause later, the page has controls but not all of them,
+  and every ref collected from it is a path that the next chunk moves (§7.11). So quiet is
+  accepted only once the page also classifies as something other than `loading` **and** its
+  control count has held still for two windows running — unless the page never mutated at all,
+  which is server-rendered HTML answering that it was finished before the question. The 4-second
+  ceiling a busy page already pays bounds the whole thing.
+- **A flat hold before every capture.** `config.capture.delayMs` (default **2000**) plus a second
+  settle, charged to every state whether or not it needed one. On a measured Bluesky run that was
+  107 seconds of holding for screens that were already there.
+- **Fonts and images, before every action.** They are about the picture, not about whether a
+  control can be pressed, so waiting for them cost up to four seconds a move for something only
+  the shutter cares about. `screenshot()` awaits them now; `settle()` does not.
+
+`goto()` settles before it returns, in both modes. Callers therefore never settle after a
+navigation — doing so waited out two ceilings for one move.
+
+So the crawl **reads the screen and holds only when the screen asks for it**: classify, and while
+the answer is `loading`, wait `delayMs`, settle, and ask again — at most three times. A screen
+that is there costs one classify (~1ms). A slow feed costs what it used to. A screen whose data
+never comes stops at three and is captured as `loading` (§7.8) rather than eating the clock.
+
+`loading` is three signals, and it is deliberately conservative — a spinner in the corner of a
+finished screen is not a loading screen:
+
+1. **Nothing to read and nothing to press.** No text and no control: an app still booting.
+2. **Marks but no words.** Under 40 characters with skeleton markers visible: the layout arrived
+   and the data did not.
+3. **A skeleton over the fold.** Elements declaring themselves busy — `aria-busy`,
+   `role=progressbar`, or a class or `data-testid` naming a skeleton, shimmer, spinner or
+   placeholder — covering 15% or more of the viewport.
+
+§7.10 used to say a skeleton heuristic had no reliable signal and that a flat hold was safer. The
+flat hold was the more expensive way to be wrong: it captured the skeleton anyway on anything
+slower than two seconds, and taxed every screen that was never slow. A heuristic that is checked,
+retried, and then **named in the document** is honest in a way a silent wait is not.
+
+The hold changes no identity — `observe()` reads url, overlays, and fingerprint before it, so what
+it can change is the picture, never the graph.
+
+### 7.11 A click lands only where the page can receive it
+
+A click is a press at a point on screen, so what matters is not whether the control is *visible*
+but whether it is **topmost** at that point. Playwright refuses a press that another element would
+receive, waits out the timeout, and reports `intercepts pointer events`. Two layers cause that,
+and both are the crawl's own doing.
+
+**The pointer stays where the last click left it.** An app that opens a hover card under a resting
+pointer then covers whatever sits beside it, and the next click is aimed into the card. On Bluesky
+this cost `Home` and `Explore` — the two controls that join everything to everything — 87 of their
+attempts in one run. So the pointer is parked in a corner of the viewport before every press, and
+an interception buys one more park and one more press before the action is scored failed. The tap
+timeout is halved to **2.5s** so the blocked case still costs what one attempt used to.
+
+**A modal's backdrop covers the page behind it.** On an overlay state the crawl collects actions
+from the whole document, and every control behind the dialog passes the collector's test — it has
+a box, it is not hidden, it is not transparent — while being unreachable by a press. Each one then
+spends the action cap on a timeout, and the dialog's own controls, the ones that make real edges,
+are never reached. So **an overlay state acts only inside its overlay**. Where nothing is
+recognized as inside it — §3.1's inert-background case names no subtree — the whole page stays
+actionable, because half a rule is worse than the old behaviour.
+
+Both are the same mistake: reading "the browser can see it" as "a person could click it".
+
+**Three ways an action can not happen, three codes.** Folding them into one bucket is how 233
+blocked clicks hid for a whole run. The renderer tags the error, so the distinction survives the
+trip from Playwright to the document.
+
+| Code | Means |
+|---|---|
+| `action-intercepted` | the press landed on something else; the page never received it |
+| `action-ref-stale` | the ref matches nothing — the app re-rendered the control away |
+| `action-failed` | everything else the control itself did |
+
+A stale ref is asked about before the press, not discovered by waiting out the tap timeout: a
+locator that matches nothing takes the full 2.5s to say so, and on a streaming feed that was the
+single largest source of wasted clicks left in the run.
+
+**And a stale ref is looked up again before it is given up on.** A ref is a path through the DOM,
+so an app that re-renders between the collect and the press moves the path out from under a
+control that is still on screen. The crawl re-collects and matches on what the control *is* — its
+label and its target — and presses that instead. Only when nothing matches is the action failed.
+
+### 7.12 Order actions by what they can teach
+
+A screen offers more actions than the cap allows, and they are not worth the same. Three rules, in
+the order they apply:
+
+**One link per screen.** A feed offers the same route once per row. The canvas draws one node for
+the pattern either way (§13), so the second row costs a full cycle and changes nothing a reader
+sees. Duplicates by target screen are dropped before the cap, so the cap counts screens the walk
+can still learn from rather than repeats of one. The exception is the only thing that does change:
+**an overlay is its own state** (§3.1), so `…$image-viewer` on the second post is not a repeat of
+the first post and the rule never blocks it.
+
+**Then, unseen routes first.** A link into a route the map has never held teaches the most; a
+button with no target is next, because what it opens is unknown until it is pressed; a link into a
+route already on the map is last.
+
+**Then, skip a line already drawn.** An action whose target screen the map holds *and* already has
+an edge into from this screen is recorded as untried with reason `known-target` and never pressed.
+The first link from a screen to a route is always taken — that is the edge — and the rest are the
+same edge again.
+
+Before these rules, a breadth-first walk on Bluesky spent its budget on news articles and minted a
+state per post; at 13 seconds an action and `maxStates: 300`, the frontier grew faster than the
+walk emptied it and the run read as a loop ([performance](performance.md) §2).
+
 ## 8. Determinism
 
 Freezing is a **precondition of capture**, not a post-process. It is what makes two runs diffable,
@@ -562,7 +794,7 @@ which is what makes J6 possible later.
 | Source of variance | Freeze |
 |---|---|
 | Animation, transitions | emulate `prefers-reduced-motion: reduce`, and inject a stylesheet zeroing `animation-duration` / `transition-duration` |
-| Time | pin `Date.now`, `new Date()`, `performance.now` via an init script, before any app code runs |
+| Time | pin `Date.now`, `new Date()`, `performance.now` via an init script, before any app code runs — to `config.clock`, which defaults to the moment the crawl starts |
 | Randomness | seed `Math.random` from the same init script |
 | Fonts | await `document.fonts.ready`; capture only after |
 | Images | await decode — a half-loaded image is a different screenshot every run |
@@ -573,6 +805,21 @@ web it is an init script, because it has to land before the first line of app co
 applied after load has already lost the values the app captured at module scope. A native renderer
 freezes the same list at its own entry point, and declares `determinismFreeze: false` if it
 cannot, so a run that is not reproducible says so rather than pretending.
+
+**What the clock is pinned *to* is a trade, and the default favours breadth.** A constant epoch
+makes two runs byte-identical, which is the strongest form of diffable. It also breaks any app that
+compares a server timestamp against the client clock: an epoch in the past means data stamped
+*now* appears to arrive from the future, and the arithmetic that follows throws. jsxray shipped a
+hardcoded `2020-01-01` and it cost 59 of TanStack's 105 pages — the app threw during hydration,
+React unmounted the tree, and each page was recorded as `blank-render`, which reads as *the app
+has nothing here* rather than *we broke it*. The freeze was the most invisible kind of wrong: it
+degraded the thing it existed to protect, and reported the damage as a property of the target.
+
+So `config.clock` defaults to `'start'` — the wall clock read once when the crawl begins, shared by
+every persona in the run. A single run stays internally consistent, which is what capture actually
+requires; two runs on different days differ only where a screen renders a date. Pin an ISO date or
+epoch when cross-run diffing matters more than breadth, and know that it excludes apps whose data
+is timestamped relative to now.
 
 ## 9. Safety and privacy
 
@@ -621,6 +868,7 @@ export default defineConfig({
   loginFlow: { start: '/login', steps: [ /* fill / tap */ ] },  // handed to auth.login (§4)
   flows: [ /* named deep-path flows */ ],
   seedRoutes: ['/', '/dashboard'],
+  capture: { delayMs: 2000 },             // hold after settling, so skeletons resolve (§7.10)
   ignore: {                               // all three are globs over the canonical route (§9)
     navigation:  ['**/beta'],             // never click
     screenshots: ['/settings/secrets'],   // visit ok, never capture — privacy
@@ -671,6 +919,33 @@ Two shapes need care because they are where a literal target is absent:
 - A target assembled from parts (`` `/posts/${id}` ``) records the template as `targetExpression`
   and leaves `target` null. Reconstructing the route is the router's job, not the parser's, and
   usually the crawl answers it first.
+
+**Links by composition.** A recognizer names `Link`, but almost no app writes `Link` at the call
+site — it writes its own row, item, or card, and that wrapper spreads its props into a `Link`.
+Matching the recognizer's element name alone therefore misses most of an app's navigation: on
+Bluesky it saw 96 bare `Link` uses and missed 35 `SettingsList.LinkItem` ones, so a settings page
+full of links looked like a page with none.
+
+So a component is **also** a link element when its body spreads its own rest binding into one:
+
+```tsx
+export function LinkItem({children, ...props}) {   // `to` is in props, untouched
+  return <Link {...props}>…</Link>                 // and reaches Link
+}
+```
+
+This is a fact about the code, not a guess about the name — `InlineLinkText` takes `to` and calls a
+hook with it, forwards nothing, and is correctly not matched. The set of link elements is a fixed
+point: the recognizers seed it, a component spreading into a member joins it, and the rule composes
+through wrappers of wrappers. Resolution is cross-file and follows namespace, named, and default
+imports, so `<SettingsList.LinkItem to="…">` resolves to the `LinkItem` in that module.
+
+An element carrying a link prop whose name is not yet known is held **pending** rather than
+emitted: whether it is a link cannot be decided until every file has been read.
+
+What this does **not** reach is a wrapper that destructures the target and passes it on by hand, or
+one that routes through a hook. Those need the recognizers to name them, which is the router
+provider's job (§4.1).
 
 ### 11.3 Guards *(v2)*
 
@@ -735,12 +1010,74 @@ Segment semantics, isolated for unit testing:
 Pages Router: the filename is the last segment; `index` maps to its directory;
 `_app`/`_document`/`_error` are not screens; `pages/api/**` are route handlers.
 
+**Both routers at once.** Next serves `app/` and `pages/` together, so an App Router project
+enumerates its sibling `pages/` tree as well, App Router winning any collision. The half that
+detection did not name is still routed, and an undeclared route is one the crawl cannot recognize.
+
 Layouts are collected from the router root down to the page, outermost first. Route handlers get
 no navigation edges and are never crawled — they render no UI.
 
 **A dynamic route needs a concrete param to be visited.** The crawl gets one from a named flow, or
 from a link it traversed to reach the route. A `/tx/:id` that is never linked to and never named
 in a flow stays unreached, and is reported as unreached rather than guessed at.
+
+### 13.1 Router rules (react-router, config mode)
+
+A config tree is read out of source, so the rules are about *what counts as a route declaration*
+and what to do with syntax jsxray has no concept of.
+
+Two shapes are recognized, and one app often has both:
+
+| Shape | Example |
+|---|---|
+| Route object in an array | `{ path: ROUTES.LOGIN, Component: Login, children: [...] }` |
+| JSX element | `<Route path="/login" component={Login}/>` |
+
+- **A path is resolved through module constants, not just literals.** `path: ROUTES.SIGN_UP`
+  against a `constants/routes` module is the dominant way a large app writes its table; reading
+  only string literals sees a route table of nothing.
+- **Any element whose name ends in `Route` is a route.** Wrapping `Route` in a guard —
+  `<HFRoute>`, `<LoggedInRoute>`, `<PrivateRoute>` — is *the* v5 idiom. Matching only the bare
+  element finds half an app and reports no error for the other half.
+- **Nesting joins, absolute children do not.** A v6 child path joins onto its parent; a v5 child
+  writes the full path and is taken as-is. `index: true` resolves to its parent's path.
+- **Three pieces of syntax have nowhere to go.** A query string is dropped (`/alerts?tab=Channels`
+  is one route with a query); a v5 regex constraint is dropped (`/:team(\w+)` → `/:team`); an
+  optional param is recorded as **required** (`/help/:page?` → `/help/:page`), because §3 has no
+  optional-parameter form and the alternative is losing the route entirely.
+- **A computed path is counted, not guessed.** `` path={`${product.baseURL}/public`} `` is reported
+  through `computed-route-path` and contributes no screen.
+- **The component is followed through the barrel.** A route points at
+  `export const Page = lazy(() => import('…'))` far more often than at a component directly, and
+  stopping at the barrel gives every screen in the app the same file, no component, and — since
+  edge attribution walks up from the screen's directory — no candidate edges at all.
+
+### 13.2 Router rules (react-navigation)
+
+React Navigation routes are **names**, and a path exists only where the app declared one for deep
+linking. What `enumerate` returns is therefore the *linkable* surface, not every screen: a screen
+registered with no path is reported through `unlinkable-screens` and has no URL to visit.
+
+Paths come from either shape:
+
+| Shape | Example |
+|---|---|
+| Linking config | `linking.config.screens = { Messages: { path: 'messages', screens: { Inbox: 'inbox' } } }` |
+| Flat path map | `new Router({ Profile: '/profile/:name', Home: ['/', '/download'] })` |
+
+- **Nested `screens` are read once, from the outermost tree.** A nested map walked again on its own
+  yields the same screens a second time with the parent prefix missing.
+- **A path map is only a route table where it is used as one.** An object of path-shaped strings is
+  accepted when it is passed to a `*Router` constructor or bound to a name like `routes`/`linking`,
+  and otherwise ignored — an API endpoint map is the same shape and would invent screens.
+- **One screen may answer to several paths.** The first declared is the primary route; the rest are
+  aliases pointing at the same component.
+- **`navigate('Details')` is resolved through the name table.** This is the §4.1 boundary at its
+  sharpest: the parser records a target of `Details`, which matches no route, and only the router
+  knows the linking config that turns it into `/details/:id`. Without this step a React Navigation
+  app produces a full route manifest and not one candidate edge.
+- **The screen's component is a named export.** `<Stack.Screen name="Profile" component={Profile}/>`
+  names it outright, and React Native screens are named exports far more often than default ones.
 
 ## 14. Viewer
 
@@ -766,7 +1103,19 @@ presentation, not analysis:
 |---|---|
 | Eyebrow | first `meta.groups` entry — a Next route group is exactly this idea already, a grouping that never touches the URL — falling back to the parent path segment. Never the screen's own last segment, which would echo the title back as its own section. |
 | Title | canonical route, de-slugged and title-cased; a dynamic route becomes `<Words> Detail`; an entirely dynamic route (`/*slug`) is named after its parameter, which is what the author called it. `/` is `Home`. An overlay state is titled by its **last `$` segment** — the overlay's own accessible name, de-slugged — which is why §3.1 built identity from that name. |
-| Caption | the interaction count in and out, and the capture's persona. |
+| Caption | the interaction count in and out, and the capture's persona (its lane, §14). |
+
+**One persona, one lane.** The persona control filters to a single persona or shows them all, and
+"all" is **not a merge**. Each persona is built, laid out, and drawn as its own graph, stacked down
+the canvas under a header naming it. Two personas that both reached `/` are two nodes holding two
+captures, not one node with the other capture hidden behind it — the persona axis exists to show
+that difference, and merging is exactly what hides it. It also hides a failed login, which reads as
+a second logged-out persona whose nodes fold silently into the first (§7.5).
+
+Node ids are therefore lane-scoped: personas share screen signatures, and the signature alone no
+longer identifies a node. No edge ever crosses lanes, so each lane is laid out on its own —
+otherwise one persona's screens pull another's into a shared row, which reads as a relationship
+that is not there. A single lane gets no header; the control already names it.
 
 **Chrome** — dark ground; a dot grid whose spacing is fixed in screen space, so it does not
 scale with zoom; a vertical brand rail; square zoom controls bottom-left.
@@ -775,8 +1124,38 @@ scale with zoom; a vertical brand rail; square zoom controls bottom-left.
 they have no capture and do not belong on the flow canvas. They are reachable from `--list` and
 from a separate listing in the viewer, not as nodes (product §11.2).
 
-**Edges** — runtime only (§5); curved, single-arrowed, labelled with the interaction that caused
-the transition. One edge per pair even when several interactions share it.
+**Edges** — runtime only (§5); curved, single-arrowed, and **named for the transition rather than
+for the words on the control**. One edge per pair even when several interactions share it, so the
+line is named once:
+
+| Transition | Label |
+|---|---|
+| the screen id changed | `Navigate to /profile/:name/feed/:rkey` — the destination's canonical route (§3) |
+| an overlay appeared | `Open the rename workspace dialog` — the overlay's own name, de-slugged, with its role as the noun (§3.1) |
+| an overlay went away | `Close the rename workspace dialog` |
+| a form submitted, nothing structural changed | `Submit <control>` |
+| anything else | the control's label, capped at 40 characters |
+
+An accessible name is written to be read *in place*, next to the thing it acts on: "View this
+user's verifications" is a good button and a bad edge label. Drawn on a line it is longer than the
+node it points at, and it says where the reader already is rather than where the line goes. The
+route says where the line goes, and it is the same string the node, the inspector, and `--list`
+use for that screen. The control's own words are a fact and are not lost — they stay on
+`edge.label` in the document, in the inspector's transition list, and in `--list`. Only the line
+is renamed, which is the same split as eyebrow, title, and caption above.
+
+**The roots are `config.seedRoutes`, and nothing else.** The breadth-first search that thins the
+lines starts there, because that is where the reader enters the app and where the run entered it.
+Rooting instead at "a node with no line into it" — the obvious reading of *root* — inverts the map
+on any app with a nav bar: the entry screen is linked to from everywhere, so it is never eligible,
+while a dead end nothing links to is crowned and the entry screen is drawn hanging beneath it. On
+Bluesky that made `/support` the root and Home its child.
+
+A seed the crawl never landed on contributes no root. If no seed is on the canvas at all, the
+search falls back to nodes with nothing pointing into them, and then to any node still unvisited —
+each island needs one starting point to be drawn at all. **Islands are the honest outcome of a
+screen the crawl reached by URL and never by a click**: nothing in the data says where it hangs,
+and §7.1 forbids inventing the line. The number of them is a crawl result, not a layout choice.
 
 **One line in per screen — the shortest way there, found breadth-first.** Given both
 `/ → /welcome → /dashboard` and `/ → /dashboard`, the canvas draws only the second: `/dashboard`
@@ -812,6 +1191,13 @@ fan out vertically, centred on their parent:
                        └──────────┘
 ```
 
+**Spacing is asymmetric, because the two axes carry different things.** Between depths sits the
+edge and its label, so that gap is **220px**; between siblings sits nothing, so that gap is
+**48px**. `elk.layered` takes the two directly as `nodeNodeBetweenLayers` and `nodeNode`. `mrtree`
+has no between-levels option and spends `spacing.nodeNode` in both directions, so the horizontal
+gap is bought by padding each node's width by the difference before handing it to ELK — the
+position that comes back is still the node's own left edge, and the sibling gap is untouched.
+
 **This replaces the vertical stacking product §7 originally asked for.** Variants of one screen do
 end up stacked — a modal over `/settings` is a child of `/settings` — but as siblings in the tree,
 not as a special case, and the same rule places every other fan-out.
@@ -824,7 +1210,9 @@ drawn — including the ones a nav bar produces out of every screen — is dense
 engine could oblige.
 
 **Inspector** — in v1: route facts, the steps that reached the state, outgoing confirmed
-transitions, and which personas reached it. The component tree, props, and design-system origin
+transitions **for that state's own persona**, and which personas reached the same screen. The
+selected node belongs to one lane, so listing every persona's transitions out of it would put back
+the merge the canvas just took out. The component tree, props, and design-system origin
 (product §7.1, rows 2–3) arrive with the v2 component graph.
 
 **Typing note.** React Flow node data must be indexable. Keep the fields in their own interface and
@@ -886,6 +1274,10 @@ the smoke harness finds the ones we did not — every item in §17.2 came from i
 | **Canvas draws runtime edges only** | a declared link is a hypothesis, a traversal is a fact; the canvas shows facts |
 | **A node is a state, not a screen** | opening a modal is a traversed interaction, and an edge needs somewhere to land |
 | **Tree layout, not stacked variants** | every state is a consequence of the one before it, so variants are siblings and one rule places every fan-out |
+| **An edge is named for the transition, not for the control** | an accessible name is written to be read next to the control; on a line it is longer than the node and names where the reader already is |
+| **Capture holds before the shutter** | `settle()` cannot tell a finished screen from a skeleton, and a grey approximation of the layout reads as a real screen |
+| **The canvas roots at the seeds** | the entry screen is linked to from everywhere, so any in-degree rule crowns a dead end and hangs the entry screen under it |
+| **A click must be topmost, not merely visible** | the collector's three checks pass for a control under a modal backdrop, and the crawl spends the action cap proving it |
 | **`loginFlow` is data for the auth provider** | one call site (`auth.login`) rather than two mechanisms that can disagree |
 | **Static analysis is crawl guidance** | it earns its keep as the checklist and the planner's hints, not as canvas output |
 | **Capture or an explicit empty state** | a wireframe is a second thing to build and maintain that no reader asked for |
@@ -915,16 +1307,39 @@ history — the consequence column is why.
 | Negate ternary / `\|\|` guards | both branches read as the same condition |
 | Keep node data fields out of the index signature | `Omit` silently typed them away, and Vite did not typecheck |
 | Open the stream before writing headers | deleting `jsxray.json` crashed the server → blank canvas |
+| Canonicalize against route handlers too, not just pages | taxonomy's sign-in failure redirects to `/api/auth/error`; with only page routes to match, it landed under the catch-all `/[...slug]` and shipped a white PNG as that screen |
+| An App Router project enumerates `pages/` as well | the handler above lives in `pages/api/**` of an `app/` project — Next routes both, and the undeclared half is the half that gets mistaken for a screen |
+| A failed replay ends the state, and retries an aborted `goto` first | taxonomy's `/login` lost the page to the GitHub OAuth button, and the `Sign Up` link queued behind it — the one edge to `/register` — was then clicked into a DOM that had moved on, timing out |
+| No capture beats a blank one | a white rectangle in the frame asserts the screen looks like that; the viewer already has an empty state, and `captureStatus: "blank"` is a fact the canvas can show |
+| **Cap every settle wait** | `image.decode()` on an image that never loads never settles, and `.catch()` does not catch a hang. One slow avatar on Bluesky's feed hung the crawl forever — no capture, no diagnostic, no exit. A capped wait risks a slightly unsettled capture; an uncapped one risks no capture at all |
+| Detect the app package inside a monorepo | dub's root holds only build tooling, so `detect` said "unknown" and the whole run produced nothing |
+| Playwright serves `native` targets too | an Expo app got no renderer at all, though §4.4 names phone-viewport Playwright as the v1 answer for it |
 | Resolve a `.js` specifier to its `.ts`/`.tsx` source | `export { default } from './page.js'` resolved to nothing, so those screens had no component |
 | Split identifiers on camelCase before matching field names | `name="cardNumber"` with no label slipped past the payment refusal; `\bcard\b` does not match inside `cardNumber` |
 | The renderer resolves a control's kind in the page, not from an attribute | filling a `<select>` with `fill()` throws, and the whole form traversal dies one field in |
+| Resolve a route path through module constants | SigNoz writes every path as `ROUTES.X`; literals alone found 0 of its 74 routes |
+| Treat any `*Route` element as a route | Mattermost declares 13 of ~30 routes as `<HFRoute>` / `<LoggedInRoute>`; the bare-element match found 17 routes and 0 edges |
+| Follow a lazy barrel to the defining module | SigNoz's 68 screens all resolved to one `pageComponents.ts`, so no screen owned a component and directory attribution collapsed to a single folder |
+| Dynamic import is `ImportExpression` on Babel 8 | the Babel 7 `CallExpression` + `Import` callee shape silently matches nothing, and every lazy route keeps the barrel as its file |
+| Read a nested `screens` map only from the outermost tree | the inner map is walked twice, and the second pass emits `/inbox` beside the correct `/messages/inbox` |
+| A screen's component may be a named export | React Native almost never default-exports a screen; Bluesky's 74 screens had a file and no component |
+| Hold after settling before capturing | Bluesky's feed is laid out, fonts ready, images decoded, and entirely grey rows for another second — every capture of it was a screenshot of the loading state, filed as the screen |
+| An edge label is the transition, not the button text | Bluesky's controls are sentences ("View this user's verifications"), and the canvas drew lines longer than the nodes they joined |
+| Freeze the clock at run start, not at a constant in the past | a hardcoded `2020-01-01` threw during hydration on every TanStack Start page — 59 of 105 captured nothing, and each was blamed on the app as `blank-render` |
+| Park the pointer before pressing | the pointer rests where it last clicked, Bluesky opens a hover card there, and the card covers the next nav item: 226 of 233 failed actions were an interception, and 87 of them were `Home` and `Explore` |
+| An overlay state acts only inside its overlay | the modal backdrop caught 85 clicks aimed at the nav bar behind it, each a full timeout out of a cap of 10, so the dialog's own controls were never reached |
+| Root the canvas at `seedRoutes` | Home had 11 lines in and `/support` none, so the in-degree rule made a support page the root of Bluesky and drew Home as its child |
 
 ## 18. Known limits
 
-- Config-defined route trees (`react-router`'s `createBrowserRouter`, `react-navigation`, TanStack
-  in code mode) are detected but not parsed in v1. Generated and file-based route trees were the
-  deterministic win; the `config` discovery strategy (§4) is declared so a provider can add one
-  without a redesign.
+- A config route tree is read as far as its paths are *statically* knowable. react-router and
+  react-navigation are parsed in v1 (§13.1, §13.2); TanStack in code mode is not. Within those two,
+  a path assembled at runtime — from a plugin registry, a product's `baseURL`, a template with an
+  expression in it — cannot be read, and is counted through `computed-route-path` rather than
+  guessed at. Mattermost declares 31 such paths, which is the shape of the remaining gap: config
+  mode is a floor on what can be recovered, never the guarantee a file convention gives.
+- A react-navigation screen with no declared path has no URL, so it is enumerated only as far as
+  `unlinkable-screens` counts it. Deep-link paths are the only route identity that library has.
 - Routers outside the §4.3 set are detected and reported, never analyzed, and there is no plugin
   interface to add one. The crawl still runs from `seedRoutes`; coverage reports `null`.
 - A dynamic route never linked to and never named in a flow stays unreached. jsxray reports it

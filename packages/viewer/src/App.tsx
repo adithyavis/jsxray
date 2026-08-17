@@ -11,12 +11,13 @@ import '@xyflow/react/dist/style.css';
 import type { JsxrayDocument, ScreenState } from '@jsxray/core';
 import { hasRun, loadDocument } from './document.js';
 import { buildGraph, frameForCaptures, type FrameKind, type ScreenNodeData } from './graph.js';
-import { layoutGraph } from './layout.js';
+import { layoutLanes } from './layout.js';
 import { Inspector } from './Inspector.js';
+import { LaneNode } from './LaneNode.js';
 import { NonPageList } from './NonPageList.js';
 import { ScreenNode } from './ScreenNode.js';
 
-const NODE_TYPES = { screen: ScreenNode };
+const NODE_TYPES = { screen: ScreenNode, lane: LaneNode };
 
 export function App(): ReactElement {
   const [document, setDocument] = useState<JsxrayDocument | null>(null);
@@ -62,7 +63,7 @@ function Canvas({ document }: { document: JsxrayDocument }): ReactElement {
   useEffect(() => {
     let live = true;
     setEdges(graph.edges);
-    layoutGraph(graph.nodes, graph.edges).then((laid) => {
+    layoutLanes(graph.lanes).then((laid) => {
       if (live) setNodes(laid);
     });
     return () => {
@@ -123,7 +124,9 @@ function Canvas({ document }: { document: JsxrayDocument }): ReactElement {
               nodeTypes={NODE_TYPES}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
-              onNodeClick={(_event, node) => setSelected((node.data as ScreenNodeData).active)}
+              onNodeClick={(_event, node) => {
+                if (node.type === 'screen') setSelected((node.data as ScreenNodeData).state);
+              }}
               onPaneClick={() => setSelected(null)}
               proOptions={{ hideAttribution: true }}
               fitView

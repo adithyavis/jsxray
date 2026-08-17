@@ -39,8 +39,13 @@ export function listDocument(document: JsxrayDocument): string {
     lines.push('');
     lines.push(`states (${states.length})`);
     for (const state of states) {
-      const capture = state.capture ? state.capture.path : `— ${state.captureSkipped ?? 'none'}`;
-      lines.push(`  ${state.personaId.padEnd(10)} ${state.signature.padEnd(40)} ${capture}`);
+      const capture = state.capture ? state.capture.path : `— ${state.captureStatus}`;
+      const untried = state.untriedActions.length
+        ? `  (${state.untriedActions.length} untried)`
+        : '';
+      lines.push(
+        `  ${state.personaId.padEnd(10)} ${state.signature.padEnd(40)} ${capture}${untried}`,
+      );
     }
   }
 

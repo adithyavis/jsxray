@@ -1,21 +1,22 @@
 import { createHash } from 'node:crypto';
-import type {
-  Clickable,
-  RenderTarget,
-  FormGroup,
-  LaunchOptions,
-  Overlay,
-  RendererProvider,
-  RendererSession,
-  SessionState,
-} from '@jsxray/core';
-import { freezeScript, SETTLE_PAGE, WAIT_FOR_QUIET_DOM } from './freeze.js';
 import {
-  COLLECT_CLICKABLES,
-  COLLECT_FORMS,
-  COLLECT_OVERLAYS,
-  PAINTS_SOMETHING,
-} from './collect.js';
+  INTERCEPTED_TAG,
+  STALE_REF_TAG,
+  type Clickable,
+  type RenderTarget,
+  type FormGroup,
+  type LaunchOptions,
+  type NavigationMode,
+  type Overlay,
+  type RendererProvider,
+  type RendererSession,
+  type RenderStatus,
+  type SessionState,
+} from '@jsxray/core';
+import { AWAIT_PAINT, freezeScript, waitForQuietDom } from './freeze.js';
+import { CLASSIFY_RENDER, COLLECT_CLICKABLES, COLLECT_FORMS, COLLECT_OVERLAYS } from './collect.js';
+
+const WAIT_FOR_QUIET_DOM = waitForQuietDom(CLASSIFY_RENDER);
 
 interface PlaywrightModule {
   chromium: {
@@ -38,8 +39,14 @@ interface PlaywrightContext {
   addCookies(cookies: unknown[]): Promise<void>;
 }
 
+/** Halved, so a blocked click plus its retry costs what one click cost before. */
+const TAP_TIMEOUT = 2_500;
+const PARK_MS = 200;
+const INTERCEPTED = /intercepts pointer events/;
+
 interface PlaywrightPage {
   goto(url: string, options?: unknown): Promise<unknown>;
+  mouse: { move(x: number, y: number): Promise<void> };
   url(): string;
   waitForLoadState(state: string, options?: unknown): Promise<void>;
   evaluate<T>(fn: string, arg?: unknown): Promise<T>;
@@ -120,6 +127,7 @@ class PlaywrightSession implements RendererSession {
   readonly renderTarget: RenderTarget;
   readonly viewport: { width: number; height: number };
   readonly deviceScaleFactor: number;
+  private historyRefusals = 0;
 
   constructor(
     private readonly browser: PlaywrightBrowser,
@@ -138,18 +146,46 @@ class PlaywrightSession implements RendererSession {
     await this.context.addInitScript({ content: freezeScript(this.options.clockMs) });
   }
 
-  async goto(target: string): Promise<void> {
-    await navigate(this.page, new URL(target, this.options.baseUrl).toString());
+  /** Returns once the page has settled, so no caller settles a second time. */
+  async goto(target: string, mode: NavigationMode = 'load'): Promise<void> {
+    const url = new URL(target, this.options.baseUrl).toString();
+    if (mode === 'history' && (await this.moveByHistory(url))) return;
+    await navigate(this.page, url);
+    await this.settle();
   }
 
   /**
-   * No `networkidle` here: it costs a flat 500ms on every action, and what it was
-   * covering — late renders, fonts, images — is covered below at a fraction of it.
+   * §7.4 — push the entry and let the router hear it, so the app keeps the boot it
+   * already paid for. A router that ignores `popstate` leaves the page as it was,
+   * and an unchanged fingerprint is how that is caught; the caller then loads.
+   *
+   * An app with no client router answers that way every time, and each attempt
+   * costs a settle for nothing. Two refusals in a row is enough: stop asking.
+   */
+  private async moveByHistory(url: string): Promise<boolean> {
+    if (this.historyRefusals >= 2) return false;
+    if (!this.page.url().startsWith(new URL(this.options.baseUrl).origin)) return false;
+    const before = await this.fingerprint();
+    const moved = await this.page.evaluate<boolean>(historyGoto(url)).catch(() => false);
+    if (moved) {
+      await this.settle();
+      if ((await this.fingerprint()) !== before) {
+        this.historyRefusals = 0;
+        return true;
+      }
+    }
+    this.historyRefusals++;
+    return false;
+  }
+
+  /**
+   * No `networkidle` here. It waits on the network, which a live app never lets go
+   * quiet, so it ran to its cap every time. This waits on the screen, which does
+   * arrive — and returns the moment it has.
    */
   async settle(): Promise<void> {
     await this.page.waitForLoadState('load').catch(() => undefined);
     await this.page.evaluate<void>(WAIT_FOR_QUIET_DOM).catch(() => undefined);
-    await this.page.evaluate<void>(SETTLE_PAGE).catch(() => undefined);
   }
 
   async url(): Promise<string> {
@@ -166,9 +202,9 @@ class PlaywrightSession implements RendererSession {
     return hash(snapshot);
   }
 
-  /** On failure, assume there is something to see — a lost capture is the worse loss. */
-  async hasContent(): Promise<boolean> {
-    return this.page.evaluate<boolean>(PAINTS_SOMETHING).catch(() => true);
+  /** On failure, assume the screen is there — a lost capture is the worse loss. */
+  async renderStatus(): Promise<RenderStatus> {
+    return this.page.evaluate<RenderStatus>(CLASSIFY_RENDER).catch(() => 'ok' as const);
   }
 
   async overlays(): Promise<Overlay[]> {
@@ -176,6 +212,7 @@ class PlaywrightSession implements RendererSession {
   }
 
   async screenshot(): Promise<Uint8Array> {
+    await this.page.evaluate<void>(AWAIT_PAINT).catch(() => undefined);
     return this.page.screenshot({ animations: 'disabled', caret: 'hide', scale: 'css' });
   }
 
@@ -188,7 +225,13 @@ class PlaywrightSession implements RendererSession {
   }
 
   async tap(ref: string): Promise<void> {
-    await this.page.locator(ref).first().click({ timeout: 5_000 });
+    const locator = this.page.locator(ref).first();
+    // §7.11 — asked first, because a ref that matches nothing would otherwise
+    // spend the whole tap timeout arriving at the same answer.
+    if ((await locator.count()) === 0) {
+      throw new Error(`${STALE_REF_TAG} no element matches ${ref}`);
+    }
+    await click(this.page, locator, this.viewport);
   }
 
   async fill(ref: string, value: string): Promise<void> {
@@ -223,12 +266,32 @@ class PlaywrightSession implements RendererSession {
   }
 }
 
+/**
+ * §7.4 — the same move the app's own links make. `popstate` is what every router
+ * listens to, and dispatching it is the only way to announce a `pushState` the
+ * router did not make itself.
+ */
+function historyGoto(url: string): string {
+  return `(() => {
+  const target = new URL(${JSON.stringify(url)}, location.href);
+  if (target.origin !== location.origin) return false;
+  history.pushState(history.state, '', target.href);
+  dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
+  return true;
+})()`;
+}
+
 /** The part of a page a navigation needs — narrow, so a test can stand one up. */
 export interface Navigable {
   goto(url: string, options?: unknown): Promise<unknown>;
   waitForLoadState(state: string, options?: unknown): Promise<void>;
 }
 
+/**
+ * No `networkidle`: a live app never goes quiet, so the wait ran to its cap on
+ * every load and bought nothing `settle()` does not already cover — the load
+ * event, a quiet DOM, the fonts and the images.
+ */
 export async function navigate(page: Navigable, url: string): Promise<void> {
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
@@ -237,12 +300,57 @@ export async function navigate(page: Navigable, url: string): Promise<void> {
     await page.waitForLoadState('load').catch(() => undefined);
     await page.goto(url, { waitUntil: 'domcontentloaded' });
   }
-  await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
+}
+
+export interface Pointer {
+  mouse: { move(x: number, y: number): Promise<void> };
+  evaluate<T>(fn: string, arg?: unknown): Promise<T>;
+}
+
+export interface ClickTarget {
+  click(options?: unknown): Promise<void>;
+}
+
+/**
+ * §7.3 — a click leaves the pointer parked on what it hit, and an app that opens a
+ * hover card there covers the next control with it. So park the pointer in the corner
+ * first, and read an interception as one more reason to park rather than a dead action.
+ */
+export async function click(
+  page: Pointer,
+  target: ClickTarget,
+  viewport: { width: number; height: number },
+): Promise<void> {
+  const park = async (): Promise<void> => {
+    await page.mouse.move(viewport.width - 1, viewport.height - 1);
+    // A hover card closes on its own delay, so give it one before pressing.
+    await page.evaluate<void>(`new Promise((resolve) => setTimeout(resolve, ${PARK_MS}))`);
+  };
+
+  await park();
+  try {
+    await target.click({ timeout: TAP_TIMEOUT });
+  } catch (error) {
+    if (!INTERCEPTED.test(messageOf(error))) throw error;
+    await park();
+    try {
+      await target.click({ timeout: TAP_TIMEOUT });
+    } catch (retried) {
+      if (!INTERCEPTED.test(messageOf(retried))) throw retried;
+      // §7.11 — tagged, so a press the page never received reads as that and not
+      // as a control that did nothing.
+      throw new Error(`${INTERCEPTED_TAG} ${messageOf(retried)}`);
+    }
+  }
 }
 
 /** Chromium's name for "someone else navigated first" — a race, not a dead page. */
 function isAbortedNavigation(error: unknown): boolean {
   return error instanceof Error && error.message.includes('net::ERR_ABORTED');
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function hash(value: string): string {

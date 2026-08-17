@@ -10,8 +10,12 @@ interface InspectorProps {
 
 export function Inspector({ document, state, onClose }: InspectorProps): ReactElement {
   const screen = screenOf(document, state);
+  // This is one persona's state, so only that persona's traversals belong here.
   const outgoing = document.edges.filter(
-    (edge) => edge.discoveredBy === 'runtime' && edge.fromState === state.signature,
+    (edge) =>
+      edge.discoveredBy === 'runtime' &&
+      edge.fromState === state.signature &&
+      edge.personaId === state.personaId,
   );
   const personas = document.states
     .filter((candidate) => candidate.signature === state.signature)

@@ -49,6 +49,10 @@ export default defineConfig({
 
   seedRoutes: ['/'],
 
+  capture: {
+    delayMs: 2000,                         // hold after settling, so skeletons resolve first
+  },
+
   ignore: {
     navigation: [],                        // never click through to these
     actions: [],                           // visit and capture, but do not interact

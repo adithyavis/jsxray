@@ -33,6 +33,7 @@ export async function run(options: RunOptions): Promise<JsxrayDocument> {
     id: persona.id,
     authenticated: Boolean(persona.login),
   }));
+  document.seedRoutes = options.config.seedRoutes;
 
   document.framework = detect(options.root);
   document.stages.push({ name: 'detect', status: 'ok' });

@@ -105,6 +105,7 @@ export default defineConfig({
   loginFlow: { start: '/login', steps: [ /* fill / tap */ ] },  // the auth provider's script
   flows: [ /* named deep-path flows */ ],
   seedRoutes: ['/', '/dashboard'],
+  capture: { delayMs: 2000 },             // hold before the shutter, so skeletons resolve
   ignore: {
     navigation:   ['**/beta'],            // never click
     screenshots: ['/settings/secrets'],     // visit ok, never capture — privacy
@@ -121,12 +122,13 @@ styling.
 | Element | Rule |
 |---|---|
 | **Node** | **One state, not one screen** — a screen with a modal open is a second node. A device frame; phone for native targets, browser for web. Reader can override the frame. |
-| **Frame contents** | The screen capture strictly|
+| **Frame contents** | The screen capture strictly, taken once the screen's data has arrived — not the skeleton it shows while loading. |
 | **Eyebrow** | Section label above the frame, small uppercase, letterspaced. Sourced from the router's own grouping (a Next route group), falling back to the parent path segment. |
 | **Title** | Human-readable screen name; for a modal state, the modal's own name. |
-| **Edge** | Curved, single arrowed. labelled with the interaction causing the transition, Only one edge even if when several links share a pair. Drawn only when a link is established during runtime |
+| **Edge** | Curved, single arrowed. Only one edge even when several links share a pair. Drawn only when a link is established during runtime. **Labelled with the transition, not with the words on the control**: `Navigate to /profile/:name/feed/:rkey`, `Open the rename workspace dialog`, `Close the rename workspace dialog`. A button reading "View this user's verifications" is a good button and a bad edge label — on a line it is longer than the node it points at, and it names where the reader already is instead of where the line goes. The control's own words stay in the inspector and in `--list`. |
+| **Root** | The tree starts at `seedRoutes` — where a reader enters the app. A screen the crawl reached by URL but never by a click has no honest line in, and stands apart until a crawl finds one. |
 | **One line in** | Each screen shows **one** incoming line: the shortest way to reach it. If the map holds both `Home → Welcome → Dashboard` and `Home → Dashboard`, only `Home → Dashboard` is drawn. Longer ways in, links back to a screen already passed through, and self-loops are not drawn. All of them stay in the document and in the inspector; the toolbar reports how many lines were left out. |
-| **Layout** | A **tree**, growing left to right. Every state is a consequence of the state before it, so depth reads left to right and the states reachable from one node fan out vertically, centred on it. Variants of a screen (settings with different modals open) are simply that node's children — no special case. Ideally no two edges cross; the tree shape is what makes that reachable. |
+| **Layout** | A **tree**, growing left to right. Every state is a consequence of the state before it, so depth reads left to right and the states reachable from one node fan out vertically, centred on it. Variants of a screen (settings with different modals open) are simply that node's children — no special case. Ideally no two edges cross; the tree shape is what makes that reachable. The gap between depths is wide — it carries the edge and its label — and the gap between siblings is tight, because it carries nothing. |
 | **Chrome** | Dark ground, dot grid static regardless of zoom, vertical brand rail, square zoom controls bottom-left. |
 
 ![clean ordering](./clean_ordering.png)

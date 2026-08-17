@@ -56,9 +56,15 @@ export interface IgnoreRules {
 
 export interface Bounds {
   maxDepth?: number;
-  maxStates?: number;
+  /** States the **walk** may add; seeds and flows are free (§8). `null` lifts the ceiling. */
+  maxStates?: number | null;
   actionCap?: number;
   timeoutMs?: number;
+}
+
+export interface CaptureRules {
+  /** §7.10 — how long to hold after settling, so skeletons resolve before the shutter. */
+  delayMs?: number;
 }
 
 export interface JsxrayConfig {
@@ -74,6 +80,7 @@ export interface JsxrayConfig {
   /** Drive an installed browser instead of the bundled one, e.g. `'chrome'`. */
   channel?: string | null;
   bounds?: Bounds;
+  capture?: CaptureRules;
   /** §8 — what the frozen clock reads. `'start'`, or a date to pin across runs. */
   clock?: 'start' | string | number;
 }
@@ -90,6 +97,7 @@ export interface ResolvedConfig {
   viewport: { width: number; height: number };
   channel: string | null;
   bounds: Required<Bounds>;
+  capture: Required<CaptureRules>;
   /** Epoch ms, or null to freeze at whatever the clock reads when the crawl starts. */
   clock: number | null;
   configFile: string | null;
@@ -119,10 +127,11 @@ export function resolveConfig(config: JsxrayConfig, configFile: string | null): 
     channel: config.channel ?? null,
     bounds: {
       maxDepth: config.bounds?.maxDepth ?? 4,
-      maxStates: config.bounds?.maxStates ?? 120,
+      maxStates: config.bounds?.maxStates === undefined ? 120 : config.bounds.maxStates,
       actionCap: config.bounds?.actionCap ?? 12,
       timeoutMs: config.bounds?.timeoutMs ?? 10 * 60_000,
     },
+    capture: { delayMs: config.capture?.delayMs ?? 2_000 },
     clock: resolveClock(config.clock),
     configFile,
   };

@@ -75,7 +75,7 @@ function exportSingleFile(
       state.capture.path = `data:image/png;base64,${fs.readFileSync(source).toString('base64')}`;
     } catch {
       state.capture = null;
-      state.captureSkipped = 'failed';
+      state.captureStatus = 'failed';
     }
   }
 

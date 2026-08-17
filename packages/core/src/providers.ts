@@ -10,7 +10,14 @@ import type {
   RenderTarget,
   Screen,
 } from './schema.js';
-import type { Clickable, ElementRef, FormGroup, Overlay, SessionState } from './runtime.js';
+import type {
+  Clickable,
+  ElementRef,
+  FormGroup,
+  Overlay,
+  RenderStatus,
+  SessionState,
+} from './runtime.js';
 
 export type Axis = 'parser' | 'router' | 'renderer' | 'auth';
 
@@ -112,6 +119,12 @@ export interface LaunchOptions {
   channel?: string | null;
 }
 
+/**
+ * §7.4 — `load` reboots the app, `history` moves the router inside the page it
+ * already has. A renderer that cannot move by history falls back to `load`.
+ */
+export type NavigationMode = 'load' | 'history';
+
 export interface RendererSession {
   readonly rendererId: string;
   readonly renderTarget: RenderTarget;
@@ -119,12 +132,12 @@ export interface RendererSession {
   readonly deviceScaleFactor: number;
 
   freeze(): Promise<void>;
-  goto(target: string): Promise<void>;
+  goto(target: string, mode?: NavigationMode): Promise<void>;
   settle(): Promise<void>;
   url(): Promise<string>;
   fingerprint(): Promise<string>;
-  /** False when the viewport holds nothing — an error shell, a bare API response. */
-  hasContent(): Promise<boolean>;
+  /** §7.10 — is the viewport showing the screen, a skeleton, or nothing at all. */
+  renderStatus(): Promise<RenderStatus>;
   overlays(): Promise<Overlay[]>;
   screenshot(): Promise<Uint8Array>;
   clickables(): Promise<Clickable[]>;

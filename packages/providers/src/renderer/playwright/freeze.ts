@@ -55,14 +55,17 @@ export const freezeScript = (epochMs: number): string => `
 `;
 
 /**
- * Hydration replaces nodes after load, so a click on an element found before it
- * lands hits a detached node. Wait for the DOM to stop mutating.
+ * §7.10 — what a *screenshot* needs and an action does not. Fonts and images are
+ * about the picture, so waiting for them before every click charged up to four
+ * seconds a move to something only the shutter cares about. `screenshot()` awaits
+ * this; `settle()` does not.
  */
-export const SETTLE_PAGE = `
+export const AWAIT_PAINT = `
 (async () => {
   const cap = (promise, ms) =>
     Promise.race([Promise.resolve(promise).catch(() => undefined), new Promise((r) => setTimeout(r, ms))]);
 
+  // §8 — scroll is pinned, and the shutter is the place that has to be sure of it.
   window.scrollTo(0, 0);
   await cap(document.fonts.ready, 2000);
   await cap(
@@ -85,20 +88,47 @@ export const SETTLE_PAGE = `
  * freeze, so the only usable time source in the page is `setTimeout` itself.
  * The floor exists because a click handled in a React transition has not started
  * its work — or its fetch — by the time the click resolves.
+ *
+ * §7.10 — a quiet DOM is not the same as an arrived screen. An SPA goes quiet for
+ * a moment between its shell and its first paint, and reading the page there finds
+ * a splash with nothing on it to press. Two more conditions than quiet, therefore:
+ * the page classifies as something other than `loading`, and its control count has
+ * stopped changing. The second is what stops the crawl reading a half-built screen
+ * and collecting refs that are stale by the time it presses them.
  */
-export const WAIT_FOR_QUIET_DOM = `
+export const waitForQuietDom = (classify: string): string => `
 (() => new Promise((resolve) => {
   const QUIET_MS = 200;
   const FLOOR_MS = 150;
   const CEILING_MS = 4000;
+  const CONTROLS = 'a[href],button,[role=button],[role=link],[role=menuitem],[role=tab],input,select,textarea';
+  const ready = () => ${classify} !== 'loading';
+  const controls = () => document.querySelectorAll(CONTROLS).length;
+  // Twice in a row, because an app that arrives in chunks pauses between them and
+  // one steady window lands inside the pause.
+  const STEADY_ROUNDS = 2;
+  let counted = -1;
+  let steady = 0;
+  let mutations = 0;
 
+  window.scrollTo(0, 0);
   setTimeout(() => {
-    let timer = setTimeout(done, QUIET_MS);
+    let timer = setTimeout(check, QUIET_MS);
     const observer = new MutationObserver(() => {
+      mutations++;
       clearTimeout(timer);
-      timer = setTimeout(done, QUIET_MS);
+      timer = setTimeout(check, QUIET_MS);
     });
     const ceiling = setTimeout(done, CEILING_MS);
+    function check() {
+      const now = controls();
+      steady = now === counted ? steady + 1 : 0;
+      counted = now;
+      // A page that has not mutated once is not building itself, so there is
+      // nothing to wait for it to finish — server-rendered HTML answers here.
+      if ((mutations === 0 || steady >= STEADY_ROUNDS) && ready()) return done();
+      timer = setTimeout(check, QUIET_MS);
+    }
     function done() {
       clearTimeout(timer);
       clearTimeout(ceiling);

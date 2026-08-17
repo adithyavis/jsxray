@@ -218,3 +218,58 @@ export const PAINTS_SOMETHING = `(() => {
       (el) => visible(el) && getComputedStyle(el).backgroundImage !== 'none',
     );
 })()`;
+
+/**
+ * §7.10 — `ok`, `loading` or `blank`. The hold is charged only to `loading`, so
+ * this reads the page instead of taxing every capture for the worst case.
+ *
+ * A skeleton says so in three ways at once: it declares itself busy, it names
+ * itself in a class, and it fills the viewport while saying almost nothing. One
+ * signal alone is a spinner in a corner of a screen that is otherwise done.
+ */
+export const CLASSIFY_RENDER = `(() => {
+  ${PREAMBLE}
+  const body = document.body;
+  if (!body) return 'blank';
+
+  const text = (body.innerText ?? '').trim();
+  const MARKS = 'img,svg,canvas,video,picture,iframe,object,embed,input,button,select,textarea';
+  const painted = text.length > 0 ||
+    [...body.querySelectorAll(MARKS)].some(visible) ||
+    [...body.querySelectorAll('*')].some(
+      (el) => visible(el) && getComputedStyle(el).backgroundImage !== 'none',
+    );
+  if (!painted) return 'blank';
+
+  const WORDLESS = 40;
+  // An app still booting paints its splash and nothing else: no words to read and
+  // nothing to press. Neither a skeleton nor a screen — it is the moment before both.
+  const CONTROLS = 'a[href],button,[role=button],[role=link],[role=tab],input,select,textarea';
+  if (text.length < WORDLESS && ![...body.querySelectorAll(CONTROLS)].some(visible)) return 'loading';
+
+  const NAMED = /(^|[^a-z])(skeleton|shimmer|placeholder|spinner|loading|loader)([^a-z]|$)/i;
+  const declared = [...body.querySelectorAll('[aria-busy="true"],[role="progressbar"]')];
+  const named = [...body.querySelectorAll('[class],[data-testid]')].filter(
+    (el) =>
+      NAMED.test(el.getAttribute('class') ?? '') ||
+      NAMED.test(el.getAttribute('data-testid') ?? ''),
+  );
+
+  const markers = [...new Set([...declared, ...named])].filter(visible);
+  if (!markers.length) return 'ok';
+
+  // A screen that paints marks and no words has not finished fetching its words.
+  if (text.length < WORDLESS) return 'loading';
+
+  const view = innerWidth * innerHeight;
+  // Nested markers would each count the same pixels, so an outer marker wins.
+  const outermost = markers.filter((el) => !markers.some((other) => other !== el && other.contains(el)));
+  const covered = outermost.reduce((total, el) => {
+    const rect = el.getBoundingClientRect();
+    const width = Math.max(0, Math.min(rect.right, innerWidth) - Math.max(rect.left, 0));
+    const height = Math.max(0, Math.min(rect.bottom, innerHeight) - Math.max(rect.top, 0));
+    return total + width * height;
+  }, 0);
+
+  return view > 0 && covered / view >= 0.15 ? 'loading' : 'ok';
+})()`;

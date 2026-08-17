@@ -20,7 +20,14 @@ import {
   stateSignature,
   stripUrl,
 } from '../route.js';
-import type { Clickable, FormGroup, Overlay } from '../runtime.js';
+import {
+  isIntercepted,
+  isStaleRef,
+  STALE_REF_TAG,
+  type Clickable,
+  type FormGroup,
+  type Overlay,
+} from '../runtime.js';
 import type {
   Diagnostic,
   Edge,
@@ -28,6 +35,7 @@ import type {
   OverlayRef,
   ScreenState,
   Step,
+  UntriedReason,
 } from '../schema.js';
 
 export interface CrawlInput {
@@ -85,6 +93,7 @@ export async function crawl(input: CrawlInput): Promise<CrawlOutput> {
   const clockMs = config.clock ?? Date.now();
 
   for (const persona of personas) {
+    clearCaptures(input.outDir, persona.id);
     const walker = new PersonaCrawl({
       persona,
       config,
@@ -263,9 +272,41 @@ interface PersonaCrawlInput {
   log(message: string): void;
 }
 
+/**
+ * §7.10 — how many holds a screen gets before its skeleton is taken as the answer.
+ * Bounded, because a screen whose data never arrives would otherwise wait out the
+ * whole clock on its own.
+ */
+const HOLD_ATTEMPTS = 3;
+
+/**
+ * Timing trace, off unless `JSXRAY_TRACE=1`. It writes to stderr, so it never
+ * touches the document — see [performance.md](../../../../specs/performance.md).
+ */
+const TRACE = Boolean(process.env.JSXRAY_TRACE);
+const TRACE_START = Date.now();
+
+function trace(message: string): void {
+  if (!TRACE) return;
+  const at = ((Date.now() - TRACE_START) / 1000).toFixed(1).padStart(7);
+  process.stderr.write(`[trace ${at}s] ${message}\n`);
+}
+
+async function timed<T>(label: string, run: () => Promise<T>): Promise<T> {
+  if (!TRACE) return run();
+  const at = Date.now();
+  try {
+    return await run();
+  } finally {
+    trace(`${label} — ${Date.now() - at}ms`);
+  }
+}
+
 class PersonaCrawl {
   private readonly visited = new Set<string>();
   private readonly frontier: ScreenState[] = [];
+  /** §7.4 — per state signature, the steps its URL alone cannot restore. */
+  private readonly restoreTail = new Map<string, Step[]>();
   /** Concrete paths seen so far, and the patterns inferred from them (§3). */
   private readonly observedPaths: string[] = [];
   private learned: string[] = [];
@@ -274,13 +315,18 @@ class PersonaCrawl {
 
   constructor(private readonly input: PersonaCrawlInput) {
     this.deadline = Date.now() + input.config.bounds.timeoutMs;
-    this.stateBudget = input.config.bounds.maxStates;
+    // §8 — null is "no ceiling"; the deadline is then the only stop.
+    this.stateBudget = input.config.bounds.maxStates ?? Number.POSITIVE_INFINITY;
   }
 
   async run(session: RendererSession, auth: AuthProvider | null, authenticated: boolean) {
+    trace(`persona ${this.input.persona.id}: flows`);
     await this.runFlows(session);
+    trace(`persona ${this.input.persona.id}: seeds`);
     await this.runSeeds(session);
+    trace(`persona ${this.input.persona.id}: walk, frontier ${this.frontier.length}`);
     await this.runWalk(session, auth, authenticated);
+    trace(`persona ${this.input.persona.id}: done, ${this.input.states.length} states`);
   }
 
   /** Phase 1 — named flows reach gated states reliably. */
@@ -295,12 +341,11 @@ class PersonaCrawl {
       try {
         if (flow.start) {
           await session.goto(flow.start);
-          await session.settle();
           steps.push({ kind: 'goto', target: flow.start });
         }
         let previous = await this.observe(session);
         if (this.discardHandlerLanding(previous, `flow "${flow.id}"`)) continue;
-        let previousState = await this.record(session, previous, [...steps], 0);
+        let previousState = await this.record(session, previous, [...steps], 0, 'free');
 
         for (const step of flow.steps) {
           const recorded = await this.perform(session, step);
@@ -308,7 +353,14 @@ class PersonaCrawl {
           const next = await this.observe(session);
           if (this.discardHandlerLanding(next, `flow "${flow.id}"`)) break;
           if (next.signature === previous.signature) continue;
-          const nextState = await this.record(session, next, [...steps], previousState.depth + 1);
+          const nextState = await this.record(
+            session,
+            next,
+            [...steps],
+            previousState.depth + 1,
+            'free',
+            this.tailFor(previousState, previous, next, recorded),
+          );
           this.addEdge(previousState, nextState, labelOfStep(step), 'action');
           previous = next;
           previousState = nextState;
@@ -339,16 +391,20 @@ class PersonaCrawl {
       });
     }
 
+    let booted = false;
     for (const route of unique([...config.seedRoutes, ...declared])) {
       if (guard.blocksNavigation(route)) continue;
-      if (!this.hasBudget()) return;
+      if (!this.beforeDeadline()) return;
       try {
-        await session.goto(route);
-        await session.settle();
-        const observation = await this.observe(session);
+        // §7.4 — the app boots once; every seed after that is a move inside it.
+        await timed(`seed goto ${route}`, () => session.goto(route, booted ? 'history' : 'load'));
+        booted = true;
+        const observation = await timed(`seed observe ${route}`, () => this.observe(session));
         if (this.discardHandlerLanding(observation, route)) continue;
         if (this.visited.has(observation.signature)) continue;
-        await this.record(session, observation, [{ kind: 'goto', target: route }], 0);
+        await timed(`seed record ${route}`, () =>
+          this.record(session, observation, [{ kind: 'goto', target: route }], 0, 'free'),
+        );
       } catch (error) {
         diagnostics.push({
           level: 'warn',
@@ -380,6 +436,10 @@ class PersonaCrawl {
       }
 
       const state = this.frontier.shift()!;
+      trace(
+        `state ${state.signature} depth=${state.depth} steps=${state.reachedVia.length} ` +
+          `frontier=${this.frontier.length} budget=${this.stateBudget} states=${this.input.states.length}`,
+      );
       if (state.depth >= config.bounds.maxDepth) continue;
       if (guard.blocksActions(state.route)) continue;
 
@@ -390,18 +450,38 @@ class PersonaCrawl {
         }
       }
 
-      if (!(await this.reEstablish(session, state))) continue;
+      if (
+        !(await timed(`  reEstablish ${state.signature}`, () => this.reEstablish(session, state)))
+      )
+        continue;
 
-      const actions = guard
-        .filterActions<Clickable | FormGroup>([
-          ...(await session.clickables()),
-          ...(await session.forms()),
-        ])
-        .slice(0, config.bounds.actionCap);
+      const collected = await timed(`  collect ${state.signature}`, async () =>
+        this.byWhatTheyTeach(
+          this.oneLinkPerScreen(
+            state,
+            actionsWithinOverlay(
+              state,
+              guard.filterActions<Clickable | FormGroup>([
+                ...(await session.clickables()),
+                ...(await session.forms()),
+              ]),
+            ),
+          ),
+        ),
+      );
+      const actions = collected.slice(0, config.bounds.actionCap);
+      for (const cut of collected.slice(config.bounds.actionCap)) this.noteUntried(state, cut, 'cap');
+      trace(`  ${actions.length} actions on ${state.signature} (${collected.length} collected)`);
 
       for (const [index, action] of actions.entries()) {
-        if (!this.hasBudget()) return;
-        if ('target' in action && guard.blocksNavigation(action.target)) continue;
+        if (!this.hasBudget()) {
+          for (const rest of actions.slice(index)) this.noteUntried(state, rest, 'budget');
+          return;
+        }
+        if ('target' in action && guard.blocksNavigation(action.target)) {
+          this.noteUntried(state, action, 'ignored');
+          continue;
+        }
         if ('target' in action && this.targetsRouteHandler(action.target)) {
           diagnostics.push({
             level: 'info',
@@ -409,29 +489,44 @@ class PersonaCrawl {
             code: 'route-handler-landing',
             message: `${labelOf(action) ?? action.ref} points at ${action.target}, a route handler; not followed`,
           });
+          this.noteUntried(state, action, 'ignored');
+          continue;
+        }
+        // The map already has this line, so pressing it again costs a full cycle
+        // and draws nothing new — the fiftieth post in a feed is the first one.
+        if ('target' in action && this.alreadyDrawn(state, action.target)) {
+          this.noteUntried(state, action, 'known-target');
           continue;
         }
 
-        const before = await this.observe(session);
-        const performed = await this.attempt(session, action);
+        const label = labelOf(action) ?? action.ref;
+        const before = await timed(`    observe before "${label}"`, () => this.observe(session));
+        const performed = await timed(`    act "${label}"`, () => this.attempt(session, action));
         if (!performed.length) {
-          if (!(await this.resume(session, state, actions.length - index - 1))) break;
+          trace(`    "${label}" failed`);
+          if (
+            !(await timed(`    resume after "${label}"`, () =>
+              this.resume(session, state, actions, index),
+            ))
+          )
+            break;
           continue;
         }
 
-        let after = await this.observe(session);
+        let after = await timed(`    observe after "${label}"`, () => this.observe(session));
         if (unchanged(before, after) && mayStillNavigate(action, before.route)) {
           // Confirm before scoring it dead: a transition may not have committed yet.
           await session.settle();
           after = await this.observe(session);
         }
         if (unchanged(before, after)) {
+          trace(`    "${label}" dead`);
           this.recordDeadAction(state, action);
           continue;
         }
 
         if (this.discardHandlerLanding(after, labelOf(action) ?? action.ref)) {
-          if (!(await this.resume(session, state, actions.length - index - 1))) break;
+          if (!(await this.resume(session, state, actions, index))) break;
           continue;
         }
 
@@ -443,14 +538,23 @@ class PersonaCrawl {
             code: 'ignored-landing',
             message: `${labelOf(action)} redirected to ${after.route}, which ignore.navigation covers; discarded`,
           });
-          if (!(await this.resume(session, state, actions.length - index - 1))) break;
+          if (!(await this.resume(session, state, actions, index))) break;
           continue;
         }
 
         const steps = [...state.reachedVia, ...performed];
-        const next = await this.record(session, after, steps, state.depth + 1);
+        const known = this.visited.has(after.signature);
+        const next = await timed(`    record ${after.signature}`, () =>
+          this.record(session, after, steps, state.depth + 1, 'budget', this.tailFor(state, before, after, performed)),
+        );
+        trace(`    "${label}" -> ${after.signature}${known ? ' (known)' : ' (NEW)'}`);
         this.addEdge(state, next, labelOf(action), 'form' in action ? 'form' : 'action');
-        if (!(await this.resume(session, state, actions.length - index - 1))) break;
+        if (
+          !(await timed(`    resume after "${label}"`, () =>
+            this.resume(session, state, actions, index),
+          ))
+        )
+          break;
       }
     }
   }
@@ -458,18 +562,40 @@ class PersonaCrawl {
   private async attempt(session: RendererSession, action: Clickable | FormGroup): Promise<Step[]> {
     try {
       if (isForm(action)) return await this.submitForm(session, action);
-      await session.tap(action.ref);
+      const ref = await this.refFor(session, action);
+      await session.tap(ref);
       await session.settle();
-      return [{ kind: 'tap', target: action.ref, label: action.label }];
+      return [{ kind: 'tap', target: ref, label: action.label }];
     } catch (error) {
       this.input.diagnostics.push({
         level: 'info',
         stage: 'crawl',
-        code: 'action-failed',
+        // §7.11 — a press the page never received is its own fault, not a dead control.
+        code: diagnosticCodeFor(error),
         message: `${labelOf(action) ?? action.ref}: ${messageOf(error)}`,
       });
       return [];
     }
+  }
+
+  /**
+   * §7.11 — a ref is a path through the DOM, and an app that re-renders between the
+   * collect and the press moves the path out from under it. Look the control up
+   * again by what it is — its label and its target — rather than losing the action.
+   */
+  private async refFor(
+    session: RendererSession,
+    want: { ref: string; label: string | null; target?: string | null },
+  ): Promise<string> {
+    const onScreen = await session.clickables();
+    if (onScreen.some((candidate) => candidate.ref === want.ref)) return want.ref;
+    const again = onScreen.find(
+      (candidate) =>
+        candidate.label === want.label &&
+        (want.target === undefined || candidate.target === want.target),
+    );
+    if (again) return again.ref;
+    throw new Error(`${STALE_REF_TAG} nothing on the page matches ${want.ref}`);
   }
 
   /** §7.3 — a form is one action: fill every synthesizable field, then submit. */
@@ -500,34 +626,81 @@ class PersonaCrawl {
   private async resume(
     session: RendererSession,
     state: ScreenState,
-    untried: number,
+    actions: readonly (Clickable | FormGroup)[],
+    index: number,
   ): Promise<boolean> {
     if (await this.reEstablish(session, state)) return true;
-    if (untried > 0) {
+
+    const rest = actions.slice(index + 1);
+    for (const action of rest) this.noteUntried(state, action, 'unreachable');
+    if (rest.length) {
       this.input.diagnostics.push({
         level: 'warn',
         stage: 'crawl',
         code: 'actions-abandoned',
-        message: `${state.signature}: could not be returned to, so ${untried} action${untried === 1 ? '' : 's'} on it went untried`,
+        message: `${state.signature}: could not be returned to, so ${rest.length} action${rest.length === 1 ? '' : 's'} on it went untried`,
       });
     }
     return false;
   }
 
-  /** §7.4 — backtracking by replay, not history. */
+  /**
+   * §7.4 — back to a state without rebooting the app. Four rungs, cheapest first:
+   * already there costs one `observe`; a history move costs a render; a load is
+   * the reset that always holds, and it is what an overlay left open needs; a full
+   * replay is the last resort for a state no URL rebuilds.
+   */
   private async reEstablish(session: RendererSession, state: ScreenState): Promise<boolean> {
+    // Not the signature: patterns are learned as the walk goes (§3), so a state
+    // recorded before its pattern existed carries a name the crawl has since
+    // stopped using. Where the page *is* does not drift like that.
+    const arrived = (here: Observation): boolean =>
+      stripUrl(here.url) === stripUrl(state.url) && sameOverlays(here.overlays, state.overlays);
+
     try {
-      for (const step of state.reachedVia) {
-        if (step.kind === 'goto') await session.goto(step.target);
-        else if (step.kind === 'fill') await session.fill(step.target, step.value ?? '');
-        else await session.tap(step.target);
-        await session.settle();
+      let here = await timed(`      here?`, () => this.observe(session));
+      if (arrived(here)) return true;
+
+      if (stripUrl(here.url) !== stripUrl(state.url)) {
+        await timed(`      history ${state.url}`, () => session.goto(state.url, 'history'));
+        here = await this.observe(session);
       }
-      if (!state.reachedVia.length) {
-        await session.goto(state.url);
-        await session.settle();
+
+      // A stale overlay is still open, or the router ignored the history move.
+      if (stripUrl(here.url) !== stripUrl(state.url) || here.overlays.length > 0) {
+        await timed(`      load ${state.url}`, () => session.goto(state.url));
+        here = await this.observe(session);
       }
-      return true;
+
+      // What the URL cannot restore: the taps that opened this state's overlay.
+      for (const step of this.restoreTail.get(state.signature) ?? []) {
+        await timed(`      re-tap ${step.kind} ${step.target}`, async () => {
+          if (step.kind === 'goto') return session.goto(step.target, 'history');
+          if (step.kind === 'fill') await session.fill(step.target, step.value ?? '');
+          else await session.tap(await this.refFor(session, { ref: step.target, label: step.label ?? null }));
+          await session.settle();
+        });
+        here = await this.observe(session);
+      }
+
+      if (arrived(here)) return true;
+
+      // Last resort — the whole path from the front door. A state a fresh URL
+      // cannot rebuild (a form's landing page, a redirect) is rare enough to pay
+      // for, and losing it is worse than the replay it costs.
+      here = await timed(`      replay ${state.reachedVia.length} steps`, () =>
+        this.replay(session, state.reachedVia),
+      );
+      if (arrived(here)) return true;
+
+      // Every queued action's ref is a path into a DOM that is no longer on screen.
+      this.input.diagnostics.push({
+        level: 'warn',
+        stage: 'crawl',
+        code: 'reestablish-drifted',
+        message: `${state.signature}: came back to ${here.signature} instead`,
+      });
+      return false;
     } catch (error) {
       this.input.diagnostics.push({
         level: 'warn',
@@ -537,6 +710,121 @@ class PersonaCrawl {
       });
       return false;
     }
+  }
+
+  private async replay(session: RendererSession, steps: readonly Step[]): Promise<Observation> {
+    for (const step of steps) {
+      if (step.kind === 'goto') {
+        await session.goto(step.target);
+        continue;
+      }
+      if (step.kind === 'fill') await session.fill(step.target, step.value ?? '');
+      else await session.tap(step.target);
+      await session.settle();
+    }
+    return this.observe(session);
+  }
+
+  /**
+   * §7.4 — the steps a URL alone cannot restore. An action that moved the URL needs
+   * none: the URL is the whole story. An action that did not moved something inside
+   * the page — an overlay — and that has to be re-tapped on arrival.
+   */
+  private tailFor(
+    state: ScreenState,
+    before: Observation,
+    after: Observation,
+    performed: Step[],
+  ): Step[] {
+    if (stripUrl(before.url) !== stripUrl(after.url)) return [];
+    return [...(this.restoreTail.get(state.signature) ?? []), ...performed];
+  }
+
+  /**
+   * §7.5 — one link per screen. A feed offers the same route once per row, and the
+   * canvas draws one node for the pattern either way, so the second row costs a full
+   * cycle and changes nothing a reader sees. Runs before the action cap, so the cap
+   * counts screens the walk can still learn from.
+   */
+  private oneLinkPerScreen<T extends Clickable | FormGroup>(state: ScreenState, actions: T[]): T[] {
+    const taken = new Set<string>();
+    const kept: T[] = [];
+    for (const action of actions) {
+      const target = 'target' in action ? action.target : null;
+      if (!target?.startsWith('/')) {
+        kept.push(action);
+        continue;
+      }
+      const screen = this.screenIdOf(target);
+      if (taken.has(screen)) {
+        this.noteUntried(state, action, 'known-target');
+        continue;
+      }
+      taken.add(screen);
+      kept.push(action);
+    }
+    return kept;
+  }
+
+  /**
+   * §2 of specs/performance.md — order by what an action can teach. A link into a
+   * route the map has never seen first; then a button with no target, because what
+   * it opens is unknown until it is pressed; a link into a route already drawn last.
+   */
+  private byWhatTheyTeach<T extends Clickable | FormGroup>(actions: T[]): T[] {
+    const rank = (action: T): number => {
+      if (isForm(action)) return 1;
+      if (!action.target) return 1;
+      return this.reached(this.screenIdOf(action.target)) ? 2 : 0;
+    };
+    return actions
+      .map((action, index) => ({ action, index, rank: rank(action) }))
+      .sort((a, b) => a.rank - b.rank || a.index - b.index)
+      .map((entry) => entry.action);
+  }
+
+  /** True once this persona's map holds both the target screen and a line into it. */
+  private alreadyDrawn(state: ScreenState, target: string | null): boolean {
+    if (!target?.startsWith('/')) return false;
+    const screen = this.screenIdOf(target);
+    if (!this.reached(screen)) return false;
+    return this.input.edges.some(
+      (edge) =>
+        edge.discoveredBy === 'runtime' &&
+        edge.personaId === this.input.persona.id &&
+        edge.from === state.screenId &&
+        edge.to === screen,
+    );
+  }
+
+  private screenIdOf(target: string): string {
+    const route = canonicalizeUrl(target, [...this.input.matchPatterns, ...this.learned]);
+    return this.input.screenIdByRoute.get(route) ?? route;
+  }
+
+  private reached(screen: string): boolean {
+    return this.input.states.some(
+      (state) => state.personaId === this.input.persona.id && state.screenId === screen,
+    );
+  }
+
+  private noteUntried(
+    state: ScreenState,
+    action: Clickable | FormGroup,
+    reason: UntriedReason,
+  ): void {
+    const untried = {
+      label: labelOf(action),
+      target: 'target' in action ? action.target : null,
+      reason,
+    };
+    if (
+      state.untriedActions.some(
+        (entry) => entry.label === untried.label && entry.target === untried.target,
+      )
+    )
+      return;
+    state.untriedActions.push(untried);
   }
 
   private async observe(session: RendererSession): Promise<Observation> {
@@ -585,6 +873,8 @@ class PersonaCrawl {
     observation: Observation,
     reachedVia: Step[],
     depth: number,
+    spend: 'budget' | 'free' = 'budget',
+    restoreTail: Step[] = [],
   ): Promise<ScreenState> {
     const existing = this.input.states.find(
       (state) =>
@@ -600,17 +890,22 @@ class PersonaCrawl {
       personaId: this.input.persona.id,
       overlays: observation.overlays,
       capture: null,
-      captureSkipped: null,
+      captureStatus: 'not-run',
       reachedVia,
       deadActions: [],
+      untriedActions: [],
       fingerprint: observation.fingerprint,
       depth,
     };
 
+    this.restoreTail.set(state.signature, restoreTail);
     await this.capture(session, state);
     this.input.states.push(state);
     this.visited.add(state.signature);
-    this.stateBudget--;
+    // §8 — the declared route table is finite and the app's own, so seeding it
+    // is not what `maxStates` is for. Spending the walk's budget on it starves
+    // the interaction walk on any app with more routes than the bound.
+    if (spend === 'budget') this.stateBudget--;
     this.frontier.push(state);
     this.input.log(`  ${this.input.persona.id}  ${state.signature}`);
     return state;
@@ -619,12 +914,25 @@ class PersonaCrawl {
   /** The single call site of screenshot(), which is what makes the privacy rule unskippable. */
   private async capture(session: RendererSession, state: ScreenState) {
     if (this.input.guard.blocksScreenshot(state.route)) {
-      state.captureSkipped = 'privacy';
+      state.captureStatus = 'privacy';
       return;
     }
 
-    if (!(await session.hasContent())) {
-      state.captureSkipped = 'blank';
+    // §7.10 — read the screen first. Only a skeleton pays the hold, so the fixed
+    // tax on every capture becomes a retry on the few that need one.
+    let status = await timed(`      classify ${state.signature}`, () => session.renderStatus());
+    const attempts = this.input.config.capture.delayMs > 0 ? HOLD_ATTEMPTS : 0;
+    for (let attempt = 0; status === 'loading' && attempt < attempts; attempt++) {
+      const before = await session.fingerprint();
+      await timed(`      hold ${state.signature}`, () => this.hold(session));
+      status = await session.renderStatus();
+      // A hold that changed nothing means nothing is on the way. A screen behind an
+      // auth wall renders empty forever, and it would otherwise take every hold.
+      if (status === 'loading' && (await session.fingerprint()) === before) break;
+    }
+
+    if (status === 'blank') {
+      state.captureStatus = 'blank';
       this.input.diagnostics.push({
         level: 'warn',
         stage: 'crawl',
@@ -633,8 +941,16 @@ class PersonaCrawl {
       });
       return;
     }
+    if (status === 'loading') {
+      this.input.diagnostics.push({
+        level: 'warn',
+        stage: 'crawl',
+        code: 'loading-capture',
+        message: `${state.signature} still showed a skeleton after ${this.input.config.capture.delayMs}ms; the capture is of the loading state`,
+      });
+    }
     try {
-      const bytes = await session.screenshot();
+      const bytes = await timed(`      screenshot ${state.signature}`, () => session.screenshot());
       const file = path.join(
         this.input.outDir,
         ASSET_DIRNAME,
@@ -650,8 +966,9 @@ class PersonaCrawl {
         viewport: session.viewport,
         deviceScaleFactor: session.deviceScaleFactor,
       };
+      state.captureStatus = status;
     } catch (error) {
-      state.captureSkipped = 'failed';
+      state.captureStatus = 'failed';
       this.input.diagnostics.push({
         level: 'warn',
         stage: 'crawl',
@@ -659,6 +976,17 @@ class PersonaCrawl {
         message: `${state.signature}: ${messageOf(error)}`,
       });
     }
+  }
+
+  /**
+   * §7.10 — settle answers "has the page stopped moving", which a skeleton has. The
+   * hold is for the data behind it, and a second settle awaits whatever it painted.
+   */
+  private async hold(session: RendererSession): Promise<void> {
+    const { delayMs } = this.input.config.capture;
+    if (delayMs <= 0) return;
+    await sleep(delayMs);
+    await session.settle();
   }
 
   private addEdge(from: ScreenState, to: ScreenState, label: string | null, kind: string) {
@@ -690,7 +1018,6 @@ class PersonaCrawl {
   private async perform(session: RendererSession, step: FlowStep): Promise<Step[]> {
     if ('goto' in step) {
       await session.goto(step.goto);
-      await session.settle();
       return [{ kind: 'goto', target: step.goto }];
     }
     if ('fill' in step) {
@@ -711,6 +1038,8 @@ class PersonaCrawl {
       await session.settle();
       return [{ kind: 'tap', target: step.tap, label: step.label ?? null }];
     }
+    // A wait moves nothing, so it records no step and replay does not need it.
+    if ('wait' in step) await sleep(step.wait);
     return [];
   }
   
@@ -732,12 +1061,50 @@ class PersonaCrawl {
   }
 
   private hasBudget(): boolean {
-    return this.stateBudget > 0 && Date.now() < this.deadline;
+    return this.stateBudget > 0 && this.beforeDeadline();
+  }
+
+  private beforeDeadline(): boolean {
+    return Date.now() < this.deadline;
+  }
+}
+
+/**
+ * A capture the current run did not write is a picture of an older app. Cleared
+ * per persona, so crawling one persona leaves the others' captures alone.
+ */
+function clearCaptures(outDir: string, personaId: string): void {
+  const dir = path.join(outDir, ASSET_DIRNAME, personaId);
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (entry.endsWith('.png')) fs.rmSync(path.join(dir, entry), { force: true });
   }
 }
 
 function isForm(action: Clickable | FormGroup): action is FormGroup {
   return 'controls' in action;
+}
+
+/**
+ * §7.3 — a modal's backdrop swallows every click meant for the page behind it, so
+ * on an overlay state the page below is not actionable, and each control there
+ * costs the action cap a timeout. Kept permissive: an overlay whose contents are
+ * not recognized as inside it (§3.1's inert-background case) keeps its actions.
+ */
+function actionsWithinOverlay<T extends Clickable | FormGroup>(
+  state: ScreenState,
+  actions: T[],
+): T[] {
+  if (!state.overlays.length) return actions;
+  const inside = actions.filter((action) =>
+    isForm(action) ? (action.submit?.inOverlay ?? false) : action.inOverlay,
+  );
+  return inside.length ? inside : actions;
 }
 
 function labelOf(action: Clickable | FormGroup): string | null {
@@ -760,12 +1127,34 @@ function toOverlayRef(overlay: Overlay): OverlayRef {
   };
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function unique(values: readonly string[]): string[] {
   return [...new Set(values)];
 }
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * §7.11 — three ways an action can not happen, and they mean different things: the
+ * page never received the press, the ref no longer matches anything, or the control
+ * itself refused. One bucket for all three is how 233 blocked clicks hid for a run.
+ */
+function diagnosticCodeFor(error: unknown): string {
+  if (isIntercepted(error)) return 'action-intercepted';
+  if (isStaleRef(error)) return 'action-ref-stale';
+  return 'action-failed';
+}
+
+function sameOverlays(here: readonly OverlayRef[], wanted: readonly OverlayRef[]): boolean {
+  return (
+    here.length === wanted.length &&
+    here.every((overlay, index) => overlay.name === wanted[index]!.name)
+  );
 }
 
 function unchanged(before: Observation, after: Observation): boolean {
