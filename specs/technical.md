@@ -98,6 +98,8 @@ typechecked separately (Vite does not typecheck).
 | `personas` | config | declared roles | v1 |
 | `states` | crawl | observed screen states, per persona, with captures and the renderer that produced them | v1 |
 | `states[].deadActions` | crawl | interactions that changed nothing — recorded once, never retried, never an edge | v1 |
+| `states[].untriedActions` | crawl | interactions offered and never performed, with the reason (§7.5) | v1 |
+| `states[].captureStatus` | crawl | what the frame is a picture of — `ok`, `loading`, `blank`, `privacy`, `failed`, `not-run` (§7.8) | v1 |
 | `coverage` | pipeline | reached ÷ declared and confirmed ÷ matchable, plus the unmatchable count (§5.1), per persona | v1 |
 | `diagnostics` | all | levelled, stage-tagged, with source locations | v1 |
 | `stages` | pipeline | which stages actually ran | v1 |
@@ -428,10 +430,12 @@ reloads — a freeze applied after it has already missed the values the app read
 
 ```
 visit(state) =                                        # one place, so no rule is skippable
-  if match(state.route, ignore.screenshots): state.capture ← null       # privacy
-  wait(config.capture.delayMs); settle()              # §7.10 — hold for the data
-  if not hasContent():                       state.capture ← null       # blank, §7.8
-  else:                                    state.capture ← screenshot()
+  if match(state.route, ignore.screenshots): state.captureStatus ← "privacy"
+  status ← renderStatus()                             # §7.10 — read the screen first
+  while status = "loading" and holds < 3:             # only a skeleton pays the hold
+    wait(config.capture.delayMs); settle(); status ← renderStatus()
+  if status = "blank":                       state.captureStatus ← "blank"     # §7.8
+  else:      state.capture ← screenshot();   state.captureStatus ← status      # ok | loading
   return state
 
 for each persona P:
@@ -448,7 +452,8 @@ for each persona P:
 
   # Phase 2 — seeds: config.seedRoutes ∪ declared page routes
   for each route ∉ ignore.navigation:
-    goto(route); state ← observe()                    # a node, not an edge
+    goto(route, first ? load : history)               # §7.4 — the app boots once
+    state ← observe()                                 # a node, not an edge
     if state.signature ∈ visited: continue            # Phase 1 already has it
     visit(state); visited.add(state.signature); frontier.push(state, 0)
 
@@ -460,7 +465,12 @@ for each persona P:
     actions ← guard.filter(clickables() ∪ forms())                    # drops ignore.navigation
     if state.overlays and any(a.inOverlay for a in actions):          # §7.11 — the rest is
       actions ← [a for a in actions if a.inOverlay]                   # behind the backdrop
+    actions ← oneLinkPerScreen(actions)               # §7.12 — a feed's rows are one action
+    actions ← orderByWhatTheyTeach(actions)           # §7.12 — unseen route, then button, then seen
+    note untried(actions[actionCap:], "cap")          # §7.5
     for action in actions[:actionCap]:
+      if edge (state.screen → target screen) already drawn:   # §7.12
+        note untried(action, "known-target"); continue
       before ← (url, overlays, fingerprint)
       perform(action); settle()
       if (url, overlays, fingerprint) == before: record dead action; continue
@@ -472,7 +482,7 @@ for each persona P:
       visit(next)
       recordRuntimeEdge(state → next, label = action)
       if next.signature ∉ visited: visited.add(next.signature); frontier.push(next, depth+1)
-      reEstablish(state)
+      if not reEstablish(state): note untried(rest, "unreachable"); break
 ```
 
 `observe()` reads url, overlays, and fingerprint — it never captures. Capture is `visit()`'s job
@@ -533,23 +543,40 @@ The payment refusal is a hard built-in, not a default the user can relax. A requ
 synthesizable value and no config override skips the form with a diagnostic, rather than
 submitting something half-filled.
 
-### 7.4 Backtracking by replay, not history
+### 7.4 Backtracking by the shortest way back
 
-Browser back is unreliable in SPAs — it may restore a route without restoring the state that made
-it interesting. Re-reach a state by `goto` on its URL plus replaying the `reachedVia` step prefix
-that produced it. Every state therefore stores the ordered steps that reached it, which is also
-what the inspector shows a reader.
+An SPA boots once. Rebooting it to see a screen it is already holding is the single most expensive
+thing the crawl used to do — a third of a measured run went on it ([performance](performance.md)
+§1). So backtracking climbs four rungs and stops at the first that works:
 
-**A replay that fails ends the state.** Every action still queued was found in a DOM the crawl has
+| Rung | Costs | Handles |
+|---|---|---|
+| **Already there** — `observe()` and compare | ~10ms | the screen an action did not move away from |
+| **History** — `pushState` + `popstate`, the move the app's own links make | ~0.3s | a route change inside the booted app |
+| **Load** — `goto` the state's URL | ~0.5s | a router that ignores `popstate`, and a stale overlay the URL cannot close |
+| **Replay** — the whole `reachedVia` chain from the front door | seconds | a state no URL rebuilds: a form's landing page, a redirect |
+
+Every state stores both: the ordered `reachedVia` steps, which is what the inspector shows a
+reader and what the last rung replays; and, internally, the **restore tail** — the steps its URL
+alone cannot reproduce. An action that moved the URL has an empty tail, because the URL is the
+whole story. An action that did not moved something inside the page — an overlay — and that is
+what gets re-tapped on arrival.
+
+**Where the crawl is, is a URL and a set of overlays, not a signature.** Route patterns are learned
+as the walk goes (§3), so a state recorded before its pattern existed carries a name the crawl has
+since stopped using. Comparing signatures there reports a drift that did not happen and pays for a
+replay nobody needed.
+
+**Failing to get back ends the state.** Every action still queued was found in a DOM the crawl has
 left, and its ref is a path into that DOM: fired from anywhere else they miss, or worse, hit
 whatever happens to sit at the same path and record a transition nobody made. One OAuth button that
-navigates away is enough to lose the page. The untried actions are reported by count — they are not
-dead, they were never reached (§7.5).
+navigates away is enough to lose the page. The untried actions are recorded with the reason
+`unreachable` — they are not dead, they were never reached (§7.5).
 
 **A navigation cancelled mid-flight is retried once.** Chromium aborts a `goto` that arrives while
-another navigation is in progress, which is exactly the moment a replay lands after an action that
-navigated. The page is healthy and the request lost a race, so wait for the one in front and ask
-again. Only then is the state given up.
+another navigation is in progress, which is exactly the moment a backtrack lands after an action
+that navigated. The page is healthy and the request lost a race, so wait for the one in front and
+ask again. Only then is the state given up.
 
 ### 7.5 Bounds
 
@@ -568,6 +595,21 @@ Seeding is therefore stopped only by the wall clock. `maxStates: null` lifts the
 too, which is honest on an app whose reachable state set is finite and a trap on one whose is not:
 a route taking a concrete param, or an overlay named after content, mints a new signature for
 every post. The clock is the backstop that always holds.
+
+**Every action a screen offered and never got is written down.** `states[].untriedActions` holds
+the label, the target, and the reason:
+
+| Reason | What it means |
+|---|---|
+| `cap` | past `actionCap` — the screen has more to offer than the bound allows |
+| `budget` | `maxStates` or the clock ran out mid-screen |
+| `known-target` | the map already holds that screen and a line into it from here (§7.12) |
+| `unreachable` | the crawl could not get back to the screen, so the rest went untried (§7.4) |
+| `ignored` | `ignore.navigation` covers the target, or it is a route handler (§7.9) |
+
+Without it, "this screen was exhausted" and "this screen ran out of budget" look identical on the
+canvas, and the second is the one a reader has to know about. It is also the honest denominator
+for coverage: interactions seen but never taken ([revyl](revyl.md) §7).
 
 ### 7.6 Session drop
 
@@ -590,17 +632,34 @@ static side of product §9 — annotating each element with the `{isAdmin && …
 — arrives with the component graph in v2. The persona toggle is honest either way, because
 "unreached by this persona" is a fact the crawl establishes on its own.
 
-### 7.8 A blank render is reported, never captured
+### 7.8 What the capture is a picture of
+
+Every state carries `captureStatus`, and it is the frame's own account of itself:
+
+| Status | File | Means |
+|---|---|---|
+| `ok` | yes | the screen |
+| `loading` | yes | a skeleton that was still there after the holds (§7.10) — captured, and flagged as what it is |
+| `blank` | no | the body painted nothing |
+| `privacy` | no | `ignore.screenshots` covers the route (§9) |
+| `failed` | no | the screenshot itself threw |
+| `not-run` | no | the crawl did not reach this state's capture |
 
 A screenshot of a page that painted nothing — an error shell, a redirect that resolved to nothing,
 a route whose data never arrived — is a white rectangle asserting that the screen looks like that.
-The state is still real and stays in the document; the capture becomes `captureSkipped: "blank"`
-plus a `warn`, and the viewer draws the empty state it already has. §14's honesty rule applied to
-the frame: no capture says less than a blank one, and less is the true amount.
+The state is still real and stays in the document; the capture becomes `blank` plus a `warn`, and
+the viewer draws the empty state it already has. §14's honesty rule applied to the frame: no
+capture says less than a blank one, and less is the true amount.
 
 A render counts as blank when the body paints no text and no mark — no image, canvas, media,
 control, or background image. A canvas-only app is the known false positive, and it costs a
 diagnostic rather than a node.
+
+A two-value `captured / skipped` could not say `loading`, which is the case that hurts most: a
+grey approximation of the real layout reads as a real screen. The taxonomy is
+[expo-map](expo-map.md) §3's, narrowed to what the crawl can establish on its own — `empty-state`
+and `not-found` need to read the words on the screen, and guessing them would be worse than saying
+`ok`.
 
 ### 7.9 A route handler is not a screen
 
@@ -611,23 +670,53 @@ one is not followed at all. Without this, an app that redirects a failed sign-in
 `/api/auth/error` gets that response filed under whichever page route matched it — a catch-all
 `/[...slug]`, usually — and screenshotted as that screen.
 
-### 7.10 A capture holds for the data, not only for the paint
+### 7.10 Wait for the screen, not for the network and not for the clock
 
-`settle()` answers "has the page stopped moving", and a skeleton screen has stopped moving. It is
-laid out, its fonts are ready, its images are decoded, and every one of its rectangles is grey.
-Captured there, the map reports the loading state as the screen — worse than a blank capture,
-because a grey approximation of the real layout reads as a real screen.
+A page has stopped moving long before it has anything on it. Three different things used to be
+waited on here, and only one of them was the screen:
 
-So capture holds `config.capture.delayMs` (default **2000**) after settling, then settles again —
-the second settle awaits the fonts and images that the newly arrived data brought with it. The
-wait is per state and applies to the whole crawl; an app that paints in one pass sets it to `0`,
-and an app whose feed takes longer raises it.
+- **`networkidle` on every navigation.** A live app never lets the network go quiet, so the wait
+  ran to its 5-second cap every time and bought nothing. Gone.
+- **A quiet DOM.** An SPA goes quiet for a moment between its shell and its first paint. Read
+  there, the page is a splash with nothing on it to press — and the walk finds no actions and
+  calls the screen a dead end. Read one pause later, the page has controls but not all of them,
+  and every ref collected from it is a path that the next chunk moves (§7.11). So quiet is
+  accepted only once the page also classifies as something other than `loading` **and** its
+  control count has held still for two windows running — unless the page never mutated at all,
+  which is server-rendered HTML answering that it was finished before the question. The 4-second
+  ceiling a busy page already pays bounds the whole thing.
+- **A flat hold before every capture.** `config.capture.delayMs` (default **2000**) plus a second
+  settle, charged to every state whether or not it needed one. On a measured Bluesky run that was
+  107 seconds of holding for screens that were already there.
+- **Fonts and images, before every action.** They are about the picture, not about whether a
+  control can be pressed, so waiting for them cost up to four seconds a move for something only
+  the shutter cares about. `screenshot()` awaits them now; `settle()` does not.
 
-Two properties keep the hold honest. It is **not** a retry loop against a skeleton heuristic:
-"is this a skeleton" has no reliable signal, and a wrong answer either captures the loading state
-anyway or waits out the budget on a screen that was already done. And it changes no identity —
-`observe()` still reads url, overlays, and fingerprint before the hold, so what the hold can
-change is the picture, never the graph.
+`goto()` settles before it returns, in both modes. Callers therefore never settle after a
+navigation — doing so waited out two ceilings for one move.
+
+So the crawl **reads the screen and holds only when the screen asks for it**: classify, and while
+the answer is `loading`, wait `delayMs`, settle, and ask again — at most three times. A screen
+that is there costs one classify (~1ms). A slow feed costs what it used to. A screen whose data
+never comes stops at three and is captured as `loading` (§7.8) rather than eating the clock.
+
+`loading` is three signals, and it is deliberately conservative — a spinner in the corner of a
+finished screen is not a loading screen:
+
+1. **Nothing to read and nothing to press.** No text and no control: an app still booting.
+2. **Marks but no words.** Under 40 characters with skeleton markers visible: the layout arrived
+   and the data did not.
+3. **A skeleton over the fold.** Elements declaring themselves busy — `aria-busy`,
+   `role=progressbar`, or a class or `data-testid` naming a skeleton, shimmer, spinner or
+   placeholder — covering 15% or more of the viewport.
+
+§7.10 used to say a skeleton heuristic had no reliable signal and that a flat hold was safer. The
+flat hold was the more expensive way to be wrong: it captured the skeleton anyway on anything
+slower than two seconds, and taxed every screen that was never slow. A heuristic that is checked,
+retried, and then **named in the document** is honest in a way a silent wait is not.
+
+The hold changes no identity — `observe()` reads url, overlays, and fingerprint before it, so what
+it can change is the picture, never the graph.
 
 ### 7.11 A click lands only where the page can receive it
 
@@ -652,6 +741,50 @@ recognized as inside it — §3.1's inert-background case names no subtree — t
 actionable, because half a rule is worse than the old behaviour.
 
 Both are the same mistake: reading "the browser can see it" as "a person could click it".
+
+**Three ways an action can not happen, three codes.** Folding them into one bucket is how 233
+blocked clicks hid for a whole run. The renderer tags the error, so the distinction survives the
+trip from Playwright to the document.
+
+| Code | Means |
+|---|---|
+| `action-intercepted` | the press landed on something else; the page never received it |
+| `action-ref-stale` | the ref matches nothing — the app re-rendered the control away |
+| `action-failed` | everything else the control itself did |
+
+A stale ref is asked about before the press, not discovered by waiting out the tap timeout: a
+locator that matches nothing takes the full 2.5s to say so, and on a streaming feed that was the
+single largest source of wasted clicks left in the run.
+
+**And a stale ref is looked up again before it is given up on.** A ref is a path through the DOM,
+so an app that re-renders between the collect and the press moves the path out from under a
+control that is still on screen. The crawl re-collects and matches on what the control *is* — its
+label and its target — and presses that instead. Only when nothing matches is the action failed.
+
+### 7.12 Order actions by what they can teach
+
+A screen offers more actions than the cap allows, and they are not worth the same. Three rules, in
+the order they apply:
+
+**One link per screen.** A feed offers the same route once per row. The canvas draws one node for
+the pattern either way (§13), so the second row costs a full cycle and changes nothing a reader
+sees. Duplicates by target screen are dropped before the cap, so the cap counts screens the walk
+can still learn from rather than repeats of one. The exception is the only thing that does change:
+**an overlay is its own state** (§3.1), so `…$image-viewer` on the second post is not a repeat of
+the first post and the rule never blocks it.
+
+**Then, unseen routes first.** A link into a route the map has never held teaches the most; a
+button with no target is next, because what it opens is unknown until it is pressed; a link into a
+route already on the map is last.
+
+**Then, skip a line already drawn.** An action whose target screen the map holds *and* already has
+an edge into from this screen is recorded as untried with reason `known-target` and never pressed.
+The first link from a screen to a route is always taken — that is the edge — and the rest are the
+same edge again.
+
+Before these rules, a breadth-first walk on Bluesky spent its budget on news articles and minted a
+state per post; at 13 seconds an action and `maxStates: 300`, the frontier grew faster than the
+walk emptied it and the run read as a loop ([performance](performance.md) §2).
 
 ## 8. Determinism
 
@@ -1177,7 +1310,7 @@ history — the consequence column is why.
 | Canonicalize against route handlers too, not just pages | taxonomy's sign-in failure redirects to `/api/auth/error`; with only page routes to match, it landed under the catch-all `/[...slug]` and shipped a white PNG as that screen |
 | An App Router project enumerates `pages/` as well | the handler above lives in `pages/api/**` of an `app/` project — Next routes both, and the undeclared half is the half that gets mistaken for a screen |
 | A failed replay ends the state, and retries an aborted `goto` first | taxonomy's `/login` lost the page to the GitHub OAuth button, and the `Sign Up` link queued behind it — the one edge to `/register` — was then clicked into a DOM that had moved on, timing out |
-| No capture beats a blank one | a white rectangle in the frame asserts the screen looks like that; the viewer already has an empty state, and `captureSkipped: "blank"` is a fact the canvas can show |
+| No capture beats a blank one | a white rectangle in the frame asserts the screen looks like that; the viewer already has an empty state, and `captureStatus: "blank"` is a fact the canvas can show |
 | **Cap every settle wait** | `image.decode()` on an image that never loads never settles, and `.catch()` does not catch a hang. One slow avatar on Bluesky's feed hung the crawl forever — no capture, no diagnostic, no exit. A capped wait risks a slightly unsettled capture; an uncapped one risks no capture at all |
 | Detect the app package inside a monorepo | dub's root holds only build tooling, so `detect` said "unknown" and the whole run produced nothing |
 | Playwright serves `native` targets too | an Expo app got no renderer at all, though §4.4 names phone-viewport Playwright as the v1 answer for it |
