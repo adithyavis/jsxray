@@ -30,6 +30,7 @@ export const usernamePasswordAuth: AuthProvider = {
 
     if (loginFlow?.steps.length) {
       for (const step of loginFlow.steps) await replay(session, step, credentials);
+      await confirm(session);
       return;
     }
 
@@ -58,6 +59,7 @@ export const usernamePasswordAuth: AuthProvider = {
     await session.fill(password.ref, credentials.password);
     if (form.submit) await session.tap(form.submit.ref);
     await session.settle();
+    await confirm(session);
   },
 
   async isLoggedIn(session: RendererSession): Promise<boolean> {
@@ -67,6 +69,24 @@ export const usernamePasswordAuth: AuthProvider = {
     );
   },
 };
+
+/**
+ * §7.7 — a login that quietly failed is worse than one that loudly did. The flow
+ * runs, nothing throws, and the crawl maps the login wall under the persona's name:
+ * 51 screens of the logged-out app filed as "user", with no sign anything went
+ * wrong. So the last step of logging in is checking that it happened.
+ *
+ * The password field is the evidence, and this is the one moment it is reliable —
+ * the form is still on screen with its error on it. A page later there is no
+ * password field anywhere and the same question has no answer.
+ */
+async function confirm(session: RendererSession): Promise<void> {
+  if (await usernamePasswordAuth.isLoggedIn!(session)) return;
+  throw new Error(
+    `the login flow ran but a password field is still on screen at ${await session.url()}; ` +
+      `the credentials were refused, or the flow needs another step`,
+  );
+}
 
 async function replay(
   session: RendererSession,
