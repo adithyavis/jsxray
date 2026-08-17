@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
   INTERCEPTED_TAG,
-  STALE_REF_TAG,
   type Clickable,
   type RenderTarget,
   type FormGroup,
@@ -224,14 +223,15 @@ class PlaywrightSession implements RendererSession {
     return this.page.evaluate<FormGroup[]>(COLLECT_FORMS).catch(() => []);
   }
 
+  /**
+   * Playwright's own auto-wait, deliberately kept: a control that has not rendered
+   * yet is not a control that is gone. A flow's submit button appears a beat after
+   * the form it belongs to, and refusing it on the first look breaks every login.
+   * The crawl's own stale-ref check lives in the walk (§7.11), which asks the page
+   * what is on it before it presses anything.
+   */
   async tap(ref: string): Promise<void> {
-    const locator = this.page.locator(ref).first();
-    // §7.11 — asked first, because a ref that matches nothing would otherwise
-    // spend the whole tap timeout arriving at the same answer.
-    if ((await locator.count()) === 0) {
-      throw new Error(`${STALE_REF_TAG} no element matches ${ref}`);
-    }
-    await click(this.page, locator, this.viewport);
+    await click(this.page, this.page.locator(ref).first(), this.viewport);
   }
 
   async fill(ref: string, value: string): Promise<void> {
