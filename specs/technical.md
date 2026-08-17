@@ -606,6 +606,7 @@ the label, the target, and the reason:
 | `known-target` | the map already holds that screen and a line into it from here (§7.12) |
 | `unreachable` | the crawl could not get back to the screen, so the rest went untried (§7.4) |
 | `ignored` | `ignore.navigation` covers the target, or it is a route handler (§7.9) |
+| `unsafe` | the safety guard refused it — a destructive or account-writing control (§9) |
 
 Without it, "this screen was exhausted" and "this screen ran out of budget" look identical on the
 canvas, and the second is the one a reader has to know about. It is also the honest denominator
@@ -848,6 +849,13 @@ Enforcement:
   built-in unsafe-label regexes. **User rules extend the built-ins; they never replace them.**
 - Matched on the **target** *and* on the visible label. A destructive control often has no target
   at all, and on a native target there is no href to match in the first place.
+- **A social write is destructive.** Post, follow, block, mute, report, repost, send, invite: each
+  is public, each reaches other people, and no later run takes it back. A crawl borrows an account
+  to see the app; it must not also speak with it. The regexes match the verb and not the place, so
+  `Post` and `Follow` are refused while `Posts` and `Following` stay walkable.
+- **A refusal is recorded, not silent.** The action lands in `states[].untriedActions` with reason
+  `unsafe` (§7.5). A reader who cannot see that `Post` was skipped on purpose has no way to tell a
+  crawl that respected the account from one that never found the button.
 - Credentials resolve from environment variables at run time, live in memory, and reach neither
   the config, nor `jsxray.json`, nor any log. Config stores the *name* of the variable.
 - Screenshots capture real authenticated data. `init` scaffolds the warning to use a test account.

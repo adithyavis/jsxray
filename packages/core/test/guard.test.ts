@@ -72,6 +72,16 @@ describe('safety guard', () => {
     }
   });
 
+  it('walks a link to a post; refuses the button that writes one', () => {
+    // A feed row says "post" and goes somewhere. The composer says "Post" and has
+    // nowhere to go, because it publishes instead.
+    const guard = createGuard();
+    expect(guard.filterActions([link('Ana’s post', '/profile/ana/post/3lm')])).toHaveLength(1);
+    expect(guard.filterActions([link('Post', null)])).toHaveLength(0);
+    // "Delete" is dangerous wherever it points; a target does not excuse it.
+    expect(guard.filterActions([link('Delete post', '/post/3lm/delete')])).toHaveLength(0);
+  });
+
   it('rejects a form whose submit control is destructive', () => {
     const form: FormGroup = {
       ref: 'form',

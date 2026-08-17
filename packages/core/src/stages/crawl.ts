@@ -461,7 +461,7 @@ class PersonaCrawl {
             state,
             actionsWithinOverlay(
               state,
-              guard.filterActions<Clickable | FormGroup>([
+              this.safeActions(state, [
                 ...(await session.clickables()),
                 ...(await session.forms()),
               ]),
@@ -738,6 +738,21 @@ class PersonaCrawl {
   ): Step[] {
     if (stripUrl(before.url) !== stripUrl(after.url)) return [];
     return [...(this.restoreTail.get(state.signature) ?? []), ...performed];
+  }
+
+  /**
+   * §9 — the guard's refusals are part of the map, not a silence in it. A reader who
+   * cannot see that "Post" was skipped on purpose has no way to tell a crawl that
+   * respected the account from one that never found the button.
+   */
+  private safeActions<T extends Clickable | FormGroup>(state: ScreenState, actions: T[]): T[] {
+    const kept: T[] = [];
+    for (const action of actions) {
+      const reason = this.input.guard.reasonFor(action);
+      if (reason === null) kept.push(action);
+      else this.noteUntried(state, action, 'unsafe');
+    }
+    return kept;
   }
 
   /**

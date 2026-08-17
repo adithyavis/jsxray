@@ -36,9 +36,18 @@ export const BUILTIN_UNSAFE_LABELS: readonly RegExp[] = [
   /\bplace order\b/i,
   /\bconfirm (order|payment|purchase)\b/i,
   /\b(transfer|withdraw)\b/i,
-  // §9 — a social write is irreversible in the way that matters: it is public, it
-  // reaches other people, and no later run can take it back. A crawl that maps an
-  // app must not also speak on behalf of the account it borrowed.
+];
+
+/**
+ * §9 — a social write is irreversible in the way that matters: it is public, it
+ * reaches other people, and no later run can take it back. A crawl that maps an
+ * app must not also speak on behalf of the account it borrowed.
+ *
+ * Applied only to a control with **no navigation target**, because a link that
+ * navigates is not a write. A feed row reading "Ana's post" goes to the post; the
+ * button reading "Post" publishes one, and it has no href to go to.
+ */
+export const BUILTIN_WRITE_LABELS: readonly RegExp[] = [
   /\b(post|publish|share)\b/i,
   /\b(un)?follow\b/i,
   /\b(un)?block\b/i,
@@ -65,15 +74,27 @@ export function createGuard(ignore: IgnoreRules = {}): SafetyGuard {
   const noActions = routeMatcher(ignore.actions ?? []);
   const noScreenshots = routeMatcher(ignore.screenshots ?? []);
 
-  const unsafeLabel = (label: string | null): boolean =>
-    label != null && BUILTIN_UNSAFE_LABELS.some((re) => re.test(label));
+  const matches = (patterns: readonly RegExp[], label: string | null): boolean =>
+    label != null && patterns.some((re) => re.test(label));
+
+  const unsafeLabel = (label: string | null): boolean => matches(BUILTIN_UNSAFE_LABELS, label);
+  const writeLabel = (label: string | null, target: string | null): boolean =>
+    target === null && matches(BUILTIN_WRITE_LABELS, label);
 
   const reasonFor = (action: Clickable | FormGroup): string | null => {
-    if (unsafeLabel(action.label)) return `unsafe label: ${JSON.stringify(action.label)}`;
     const target = 'target' in action ? action.target : null;
+    if (unsafeLabel(action.label)) return `unsafe label: ${JSON.stringify(action.label)}`;
+    if (writeLabel(action.label, target)) {
+      return `writes to the account: ${JSON.stringify(action.label)}`;
+    }
     if (target && denyRoute(hrefToPath(target))) return `denied route: ${target}`;
-    if ('submit' in action && action.submit && unsafeLabel(action.submit.label)) {
-      return `unsafe submit label: ${JSON.stringify(action.submit.label)}`;
+    if ('submit' in action && action.submit) {
+      if (unsafeLabel(action.submit.label)) {
+        return `unsafe submit label: ${JSON.stringify(action.submit.label)}`;
+      }
+      if (writeLabel(action.submit.label, action.submit.target)) {
+        return `submit writes to the account: ${JSON.stringify(action.submit.label)}`;
+      }
     }
     return null;
   };
