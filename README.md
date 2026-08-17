@@ -143,12 +143,12 @@ Three orthogonal rules, all globs over the canonical route:
 - **Freeze before capture.** Time, randomness, animation, fonts, images, scroll,
   and carets are pinned before the first line of app code, so two runs of the
   same commit produce the same pixels.
-- **Hold only when the screen asks for it.** A settled page can still be a
+- **A screen must be old enough to be itself.** A settled page can still be a
   skeleton, and a grey approximation of the layout reads as a real screen. So the
-  crawl reads the page first: a screen that is there is captured at once, and one
-  that still looks like a skeleton waits `capture.delayMs` (default 2000) and is
-  asked again, up to three times. A skeleton that outlasts them is captured and
-  labelled `loading` rather than passed off as the screen.
+  shutter waits until the screen is `capture.delayMs` old (default 3000), counting
+  from the navigation or press that started it — a floor, not a sleep, so a screen
+  that already took that long waits for nothing. A skeleton still showing when the
+  floor runs out is captured and labelled `loading`, not passed off as the screen.
 - **Every screen says what its picture is.** `captureStatus` is one of `ok`,
   `loading`, `blank`, `privacy`, `failed` or `not-run`, and the canvas shows it.
 - **Every action offered is accounted for.** The ones the crawl never got to are
@@ -180,7 +180,7 @@ export default defineConfig({
     ],
   },
   seedRoutes: ['/', '/dashboard'],
-  capture: { delayMs: 2000 },          // how long one hold waits, when a screen needs one
+  capture: { delayMs: 3000 },          // a screen must be this old before it is worth a shot
   ignore: {
     navigation:  ['**/beta'],
     screenshots: ['/settings/secrets'],

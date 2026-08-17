@@ -127,6 +127,8 @@ class PlaywrightSession implements RendererSession {
   readonly viewport: { width: number; height: number };
   readonly deviceScaleFactor: number;
   private historyRefusals = 0;
+  /** §7.10 — when the screen now on show began arriving. */
+  private screenStartedAt = Date.now();
 
   constructor(
     private readonly browser: PlaywrightBrowser,
@@ -145,8 +147,13 @@ class PlaywrightSession implements RendererSession {
     await this.context.addInitScript({ content: freezeScript(this.options.clockMs) });
   }
 
+  pageAge(): number {
+    return Date.now() - this.screenStartedAt;
+  }
+
   /** Returns once the page has settled, so no caller settles a second time. */
   async goto(target: string, mode: NavigationMode = 'load'): Promise<void> {
+    this.screenStartedAt = Date.now();
     const url = new URL(target, this.options.baseUrl).toString();
     if (mode === 'history' && (await this.moveByHistory(url))) return;
     await navigate(this.page, url);
@@ -231,6 +238,8 @@ class PlaywrightSession implements RendererSession {
    * what is on it before it presses anything.
    */
   async tap(ref: string): Promise<void> {
+    // A press is how most screens start arriving, so the clock starts here too.
+    this.screenStartedAt = Date.now();
     await click(this.page, this.page.locator(ref).first(), this.viewport);
   }
 

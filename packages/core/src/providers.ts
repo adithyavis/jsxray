@@ -134,6 +134,12 @@ export interface RendererSession {
   freeze(): Promise<void>;
   goto(target: string, mode?: NavigationMode): Promise<void>;
   settle(): Promise<void>;
+  /**
+   * §7.10 — milliseconds since the screen began arriving, by the runner's clock.
+   * It cannot be read inside the page: §8 pins `Date.now` and `performance.now`
+   * there, so the only honest clock is out here.
+   */
+  pageAge(): number;
   url(): Promise<string>;
   fingerprint(): Promise<string>;
   /** §7.10 — is the viewport showing the screen, a skeleton, or nothing at all. */

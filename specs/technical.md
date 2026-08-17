@@ -686,9 +686,9 @@ waited on here, and only one of them was the screen:
   control count has held still for two windows running — unless the page never mutated at all,
   which is server-rendered HTML answering that it was finished before the question. The 4-second
   ceiling a busy page already pays bounds the whole thing.
-- **A flat hold before every capture.** `config.capture.delayMs` (default **2000**) plus a second
-  settle, charged to every state whether or not it needed one. On a measured Bluesky run that was
-  107 seconds of holding for screens that were already there.
+- **A flat hold *after* settling.** `config.capture.delayMs` plus a second settle. Anchored to the
+  wrong thing: `settle()` returns at 0.6s on a warm app and 1.9s on a cold one, so "settle plus two
+  seconds" lands anywhere between 2.6s and 3.9s, and on Bluesky the screen is only itself at 3s.
 - **Fonts and images, before every action.** They are about the picture, not about whether a
   control can be pressed, so waiting for them cost up to four seconds a move for something only
   the shutter cares about. `screenshot()` awaits them now; `settle()` does not.
@@ -696,28 +696,37 @@ waited on here, and only one of them was the screen:
 `goto()` settles before it returns, in both modes. Callers therefore never settle after a
 navigation — doing so waited out two ceilings for one move.
 
-So the crawl **reads the screen and holds only when the screen asks for it**: classify, and while
-the answer is `loading`, wait `delayMs`, settle, and ask again — at most three times. A screen
-that is there costs one classify (~1ms). A slow feed costs what it used to. A screen whose data
-never comes stops at three and is captured as `loading` (§7.8) rather than eating the clock.
+So `capture.delayMs` (default **3000**) is **a floor on the screen's age, not a sleep after
+settling**. The clock starts at the navigation or press that began the screen, and the shutter
+waits out whatever is left of it. A screen already older than the floor waits for nothing — which
+is what happens whenever `settle()` ran long, so the floor absorbs settle's variance instead of
+inheriting it.
 
-`loading` is three signals, and it is deliberately conservative — a spinner in the corner of a
-finished screen is not a loading screen:
+The age is kept by the **runner**, not the page: §8 pins `Date.now` and `performance.now` inside
+the page, so the only honest clock is outside it.
 
-1. **Nothing to read and nothing to press.** No text and no control: an app still booting.
-2. **Marks but no words.** Under 40 characters with skeleton markers visible: the layout arrived
-   and the data did not.
-3. **A skeleton over the fold.** Elements declaring themselves busy — `aria-busy`,
-   `role=progressbar`, or a class or `data-testid` naming a skeleton, shimmer, spinner or
-   placeholder — covering 15% or more of the viewport.
+Measured on Bluesky's `/feeds`, one navigation, sampled every 200ms:
 
-§7.10 used to say a skeleton heuristic had no reliable signal and that a flat hold was safer. The
-flat hold was the more expensive way to be wrong: it captured the skeleton anyway on anything
-slower than two seconds, and taxed every screen that was never slow. A heuristic that is checked,
-retried, and then **named in the document** is honest in a way a silent wait is not.
+| t | text on screen | what it is |
+|---|---|---|
+| 1.0s | 0 | the splash |
+| 1.5s | 187 | the shell |
+| **2.0s** | 211 | **skeleton rows** — `settle()` has long since returned |
+| **3.0s** | 1,934 | the screen |
+| 4.0s | 3,483 | pixel-identical to 3.0s; the rest is below the fold |
 
-The hold changes no identity — `observe()` reads url, overlays, and fingerprint before it, so what
-it can change is the picture, never the graph.
+Three lessons are baked into the rule above. **A quiet page is not a finished one** — settle
+returned at 0.6s here. **Text length is not the picture** — it keeps climbing after the viewport
+stops changing, so "wait until text stops growing" waits for content nobody photographs. And
+**text arrives in bursts with long flat gaps** — 187 held for 600ms, 3,488 for a full second — so
+any "stop when it stops changing" rule fires inside a gap.
+
+Classification runs **once, after the shot is due, and only to label it** (§7.8) — never to decide
+when to shoot. A heuristic that controls the timing is a heuristic that can lose you the screen;
+one that only writes a label can at worst be wrong in the document, where a reader can see it.
+
+The floor changes no identity — `observe()` reads url, overlays, and fingerprint before it, so
+what it can change is the picture, never the graph.
 
 ### 7.11 A click lands only where the page can receive it
 
