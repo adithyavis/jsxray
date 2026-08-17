@@ -15,3 +15,7 @@ dist-single/
 packages/viewer/public/
 atlas.html
 scratch/
+
+# Notes on other people's repos, read in full. Never committed.
+specs/expo-map.md
+specs/revyl.md

@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
   INTERCEPTED_TAG,
-  STALE_REF_TAG,
   type Clickable,
   type RenderTarget,
   type FormGroup,
@@ -128,6 +127,8 @@ class PlaywrightSession implements RendererSession {
   readonly viewport: { width: number; height: number };
   readonly deviceScaleFactor: number;
   private historyRefusals = 0;
+  /** §7.10 — when the screen now on show began arriving. */
+  private screenStartedAt = Date.now();
 
   constructor(
     private readonly browser: PlaywrightBrowser,
@@ -146,8 +147,13 @@ class PlaywrightSession implements RendererSession {
     await this.context.addInitScript({ content: freezeScript(this.options.clockMs) });
   }
 
+  pageAge(): number {
+    return Date.now() - this.screenStartedAt;
+  }
+
   /** Returns once the page has settled, so no caller settles a second time. */
   async goto(target: string, mode: NavigationMode = 'load'): Promise<void> {
+    this.screenStartedAt = Date.now();
     const url = new URL(target, this.options.baseUrl).toString();
     if (mode === 'history' && (await this.moveByHistory(url))) return;
     await navigate(this.page, url);
@@ -224,14 +230,17 @@ class PlaywrightSession implements RendererSession {
     return this.page.evaluate<FormGroup[]>(COLLECT_FORMS).catch(() => []);
   }
 
+  /**
+   * Playwright's own auto-wait, deliberately kept: a control that has not rendered
+   * yet is not a control that is gone. A flow's submit button appears a beat after
+   * the form it belongs to, and refusing it on the first look breaks every login.
+   * The crawl's own stale-ref check lives in the walk (§7.11), which asks the page
+   * what is on it before it presses anything.
+   */
   async tap(ref: string): Promise<void> {
-    const locator = this.page.locator(ref).first();
-    // §7.11 — asked first, because a ref that matches nothing would otherwise
-    // spend the whole tap timeout arriving at the same answer.
-    if ((await locator.count()) === 0) {
-      throw new Error(`${STALE_REF_TAG} no element matches ${ref}`);
-    }
-    await click(this.page, locator, this.viewport);
+    // A press is how most screens start arriving, so the clock starts here too.
+    this.screenStartedAt = Date.now();
+    await click(this.page, this.page.locator(ref).first(), this.viewport);
   }
 
   async fill(ref: string, value: string): Promise<void> {

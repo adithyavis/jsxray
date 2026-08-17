@@ -273,13 +273,6 @@ interface PersonaCrawlInput {
 }
 
 /**
- * §7.10 — how many holds a screen gets before its skeleton is taken as the answer.
- * Bounded, because a screen whose data never arrives would otherwise wait out the
- * whole clock on its own.
- */
-const HOLD_ATTEMPTS = 3;
-
-/**
  * Timing trace, off unless `JSXRAY_TRACE=1`. It writes to stderr, so it never
  * touches the document — see [performance.md](../../../../specs/performance.md).
  */
@@ -461,7 +454,7 @@ class PersonaCrawl {
             state,
             actionsWithinOverlay(
               state,
-              guard.filterActions<Clickable | FormGroup>([
+              this.safeActions(state, [
                 ...(await session.clickables()),
                 ...(await session.forms()),
               ]),
@@ -741,6 +734,21 @@ class PersonaCrawl {
   }
 
   /**
+   * §9 — the guard's refusals are part of the map, not a silence in it. A reader who
+   * cannot see that "Post" was skipped on purpose has no way to tell a crawl that
+   * respected the account from one that never found the button.
+   */
+  private safeActions<T extends Clickable | FormGroup>(state: ScreenState, actions: T[]): T[] {
+    const kept: T[] = [];
+    for (const action of actions) {
+      const reason = this.input.guard.reasonFor(action);
+      if (reason === null) kept.push(action);
+      else this.noteUntried(state, action, 'unsafe');
+    }
+    return kept;
+  }
+
+  /**
    * §7.5 — one link per screen. A feed offers the same route once per row, and the
    * canvas draws one node for the pattern either way, so the second row costs a full
    * cycle and changes nothing a reader sees. Runs before the action cap, so the cap
@@ -918,18 +926,15 @@ class PersonaCrawl {
       return;
     }
 
-    // §7.10 — read the screen first. Only a skeleton pays the hold, so the fixed
-    // tax on every capture becomes a retry on the few that need one.
-    let status = await timed(`      classify ${state.signature}`, () => session.renderStatus());
-    const attempts = this.input.config.capture.delayMs > 0 ? HOLD_ATTEMPTS : 0;
-    for (let attempt = 0; status === 'loading' && attempt < attempts; attempt++) {
-      const before = await session.fingerprint();
-      await timed(`      hold ${state.signature}`, () => this.hold(session));
-      status = await session.renderStatus();
-      // A hold that changed nothing means nothing is on the way. A screen behind an
-      // auth wall renders empty forever, and it would otherwise take every hold.
-      if (status === 'loading' && (await session.fingerprint()) === before) break;
-    }
+    // §7.10 — the screen has to be old enough to be itself. `settle()` answers a
+    // different question and finishes in 0.6s on a warm app, with the skeleton
+    // still on show; the shot waits out whatever is left of the floor instead.
+    await timed(`      age ${state.signature}`, () => this.holdUntilOldEnough(session));
+
+    // Read once, to say what the picture is of — never to decide when to take it.
+    const status = await timed(`      classify ${state.signature}`, () =>
+      session.renderStatus(),
+    );
 
     if (status === 'blank') {
       state.captureStatus = 'blank';
@@ -946,7 +951,7 @@ class PersonaCrawl {
         level: 'warn',
         stage: 'crawl',
         code: 'loading-capture',
-        message: `${state.signature} still showed a skeleton after ${this.input.config.capture.delayMs}ms; the capture is of the loading state`,
+        message: `${state.signature} was still loading ${this.input.config.capture.delayMs}ms after it began; the capture is of that, not of the screen`,
       });
     }
     try {
@@ -979,14 +984,15 @@ class PersonaCrawl {
   }
 
   /**
-   * §7.10 — settle answers "has the page stopped moving", which a skeleton has. The
-   * hold is for the data behind it, and a second settle awaits whatever it painted.
+   * §7.10 — `capture.delayMs` is a floor on the screen's age, not a sleep on top of
+   * one. Measured on Bluesky, `settle()` returns at 0.6s warm and 1.9s cold, and the
+   * screen is only itself at 3s; anchoring to settle inherits that three-fold swing,
+   * anchoring to the navigation absorbs it. A screen already older than the floor
+   * waits for nothing.
    */
-  private async hold(session: RendererSession): Promise<void> {
-    const { delayMs } = this.input.config.capture;
-    if (delayMs <= 0) return;
-    await sleep(delayMs);
-    await session.settle();
+  private async holdUntilOldEnough(session: RendererSession): Promise<void> {
+    const remaining = this.input.config.capture.delayMs - session.pageAge();
+    if (remaining > 0) await sleep(remaining);
   }
 
   private addEdge(from: ScreenState, to: ScreenState, label: string | null, kind: string) {

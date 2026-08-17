@@ -63,7 +63,11 @@ export interface Bounds {
 }
 
 export interface CaptureRules {
-  /** §7.10 — how long to hold after settling, so skeletons resolve before the shutter. */
+  /**
+   * §7.10 — how old a screen must be, counting from the navigation that started it,
+   * before it is worth photographing. A floor, not a sleep: a screen already older
+   * waits for nothing.
+   */
   delayMs?: number;
 }
 
@@ -131,7 +135,7 @@ export function resolveConfig(config: JsxrayConfig, configFile: string | null): 
       actionCap: config.bounds?.actionCap ?? 12,
       timeoutMs: config.bounds?.timeoutMs ?? 10 * 60_000,
     },
-    capture: { delayMs: config.capture?.delayMs ?? 2_000 },
+    capture: { delayMs: config.capture?.delayMs ?? 3_000 },
     clock: resolveClock(config.clock),
     configFile,
   };

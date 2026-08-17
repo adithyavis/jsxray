@@ -41,8 +41,10 @@ const FEED: Clickable[] = [
 ];
 
 interface StubOptions {
-  /** How many `renderStatus` calls answer `loading` before the screen arrives. */
-  skeletons?: number;
+  /** How old a screen must be before it stops looking like a skeleton. */
+  readyAfterMs?: number;
+  /** Pretend the screen has been on show this long already when the walk arrives. */
+  bornMsAgo?: number;
 }
 
 class StubSession implements RendererSession {
@@ -56,13 +58,17 @@ class StubSession implements RendererSession {
   readonly moves: string[] = [];
   private current = '/';
   private sheet = false;
-  private skeletons: number;
+  private startedAt: number;
 
-  constructor(options: StubOptions) {
-    this.skeletons = options.skeletons ?? 0;
+  constructor(private readonly options: StubOptions) {
+    this.startedAt = Date.now() - (options.bornMsAgo ?? 0);
   }
 
   async freeze(): Promise<void> {}
+
+  pageAge(): number {
+    return Date.now() - this.startedAt;
+  }
 
   async goto(target: string, mode: NavigationMode = 'load'): Promise<void> {
     const route = target.startsWith(BASE) ? target.slice(BASE.length) : target;
@@ -80,12 +86,9 @@ class StubSession implements RendererSession {
     return `${this.current}${this.sheet ? '+sheet' : ''}`;
   }
 
+  /** A real screen stops being a skeleton because time passed, not because it was asked. */
   async renderStatus(): Promise<RenderStatus> {
-    if (this.skeletons > 0) {
-      this.skeletons--;
-      return 'loading';
-    }
-    return 'ok';
+    return this.pageAge() >= (this.options.readyAfterMs ?? 0) ? 'ok' : 'loading';
   }
 
   async overlays(): Promise<Overlay[]> {
@@ -221,20 +224,22 @@ describe('which actions the walk spends its budget on', () => {
 });
 
 describe('what a capture is a picture of', () => {
-  it('does not hold for a screen that is already there', async () => {
-    const started = Date.now();
-    const { states } = await run({}, 400);
+  it('waits out the floor, so the shot is of the screen and not of its skeleton', async () => {
+    // Ready at 200ms, floor at 400ms: the shot lands after the screen arrives.
+    const { states } = await run({ readyAfterMs: 200 }, 400);
     expect(states.every((state) => state.captureStatus === 'ok')).toBe(true);
+  });
+
+  it('waits for nothing when the screen is already older than the floor', async () => {
+    // `settle()` can take longer than the floor on a cold app; the floor is an age,
+    // not a sleep, so a screen that has been up for a second is shot at once.
+    const started = Date.now();
+    await run({ bornMsAgo: 1000 }, 400);
     expect(Date.now() - started).toBeLessThan(400);
   });
 
-  it('holds for a skeleton, then captures the screen behind it', async () => {
-    const { states } = await run({ skeletons: 1 }, 10);
-    expect(states[0]?.captureStatus).toBe('ok');
-  });
-
-  it('says so when the skeleton is still there after the hold', async () => {
-    const { states, diagnostics } = await run({ skeletons: 99 }, 10);
+  it('captures a screen that never arrives, and says that is what it is', async () => {
+    const { states, diagnostics } = await run({ readyAfterMs: 60_000 }, 10);
     expect(states[0]?.captureStatus).toBe('loading');
     expect(states[0]?.capture).not.toBeNull();
     expect(diagnostics.some((entry) => entry.code === 'loading-capture')).toBe(true);

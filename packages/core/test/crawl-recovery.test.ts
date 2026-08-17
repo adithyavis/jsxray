@@ -51,6 +51,10 @@ class StubSession implements RendererSession {
   }
 
   async settle(): Promise<void> {}
+  /** Old enough that the capture floor never waits — these tests are not about it. */
+  pageAge(): number {
+    return Number.MAX_SAFE_INTEGER;
+  }
   async url(): Promise<string> {
     return `${BASE}${this.current}`;
   }
