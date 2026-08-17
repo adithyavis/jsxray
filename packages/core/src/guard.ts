@@ -36,6 +36,17 @@ export const BUILTIN_UNSAFE_LABELS: readonly RegExp[] = [
   /\bplace order\b/i,
   /\bconfirm (order|payment|purchase)\b/i,
   /\b(transfer|withdraw)\b/i,
+  // §9 — a social write is irreversible in the way that matters: it is public, it
+  // reaches other people, and no later run can take it back. A crawl that maps an
+  // app must not also speak on behalf of the account it borrowed.
+  /\b(post|publish|share)\b/i,
+  /\b(un)?follow\b/i,
+  /\b(un)?block\b/i,
+  /\b(un)?mute\b/i,
+  /\breport\b/i,
+  /\brepost\b/i,
+  /\bsend\b/i,
+  /\binvite\b/i,
 ];
 
 export interface SafetyGuard {
