@@ -20,12 +20,18 @@ import type {
 
 const BASE = 'http://localhost:9996';
 
-const link = (ref: string, label: string, target: string | null): Clickable => ({
+const link = (
+  ref: string,
+  label: string,
+  target: string | null,
+  external = false,
+): Clickable => ({
   ref,
   label,
   target,
   role: target ? 'link' : 'button',
   inOverlay: false,
+  external,
 });
 
 /**
@@ -38,6 +44,9 @@ const FEED: Clickable[] = [
   link('#post-3', 'Third post', '/post/3lmqk4rt2xc23'),
   link('#compose', 'Compose', null),
   link('#explore', 'Explore', '/explore'),
+  link('#news', 'A news article', null, true),
+  // Last in the DOM, and the only screen already on the map with no way into it.
+  link('#settings', 'Settings', '/settings'),
 ];
 
 interface StubOptions {
@@ -159,7 +168,7 @@ async function run(options: StubOptions = {}, delayMs = 0): Promise<RunResult> {
       {
         url: BASE,
         personas: [{ id: 'anon' }],
-        seedRoutes: ['/'],
+        seedRoutes: ['/', '/settings'],
         bounds: { maxDepth: 3, maxStates: 20, actionCap: 4, timeoutMs: 20_000 },
         capture: { delayMs },
       },
@@ -198,9 +207,21 @@ describe('getting back to a state', () => {
 });
 
 describe('which actions the walk spends its budget on', () => {
-  it('works a route the map has never seen before one it already holds', async () => {
+  it('draws the missing line first, whatever the DOM order', async () => {
+    // `/settings` was seeded, so the map holds the screen and no way into it. It is
+    // last in the DOM and still goes first, because it is what the map is missing.
     const { taps } = await run();
-    expect(taps[0]).toBe('#post-1');
+    expect(taps[0]).toBe('#settings');
+  });
+
+  it('never presses a link that leaves the app, and says it did not', async () => {
+    const { taps, states } = await run();
+    const feed = states.find((state) => state.signature === '/')!;
+
+    expect(taps).not.toContain('#news');
+    expect(
+      feed.untriedActions.filter((action) => action.reason === 'external').map((a) => a.label),
+    ).toEqual(['A news article']);
   });
 
   it('presses one post, not every post, and says why the rest went untried', async () => {

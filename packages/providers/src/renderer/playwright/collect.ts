@@ -125,10 +125,18 @@ ${PREAMBLE}
     if (!ref || seen.has(ref)) continue;
     seen.add(ref);
 
+    // §7.12 — keep the origin long enough to answer "does this leave the app".
+    // Reducing every href to its pathname made a Guardian article read as an
+    // in-app route with a path nothing had seen, which is the front of the queue.
     let target = null;
+    let external = false;
     const href = el.getAttribute('href');
     if (href && !href.startsWith('#') && !/^(mailto|tel|javascript):/i.test(href)) {
-      try { target = new URL(href, location.href).pathname; } catch { target = href; }
+      try {
+        const url = new URL(href, location.href);
+        if (url.origin === location.origin) target = url.pathname;
+        else external = true;
+      } catch { target = href; }
     }
 
     results.push({
@@ -137,6 +145,7 @@ ${PREAMBLE}
       target,
       role: el.getAttribute('role') ?? el.tagName.toLowerCase(),
       inOverlay: inOverlay(el),
+      external,
     });
   }
 

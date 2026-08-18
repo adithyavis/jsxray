@@ -607,6 +607,7 @@ the label, the target, and the reason:
 | `unreachable` | the crawl could not get back to the screen, so the rest went untried (§7.4) |
 | `ignored` | `ignore.navigation` covers the target, or it is a route handler (§7.9) |
 | `unsafe` | the safety guard refused it — a destructive or account-writing control (§9) |
+| `external` | the link leaves the app, so it is not a route (§7.12) |
 
 Without it, "this screen was exhausted" and "this screen ran out of budget" look identical on the
 canvas, and the second is the one a reader has to know about. It is also the honest denominator
@@ -776,16 +777,40 @@ label and its target — and presses that instead. Only when nothing matches is 
 A screen offers more actions than the cap allows, and they are not worth the same. Three rules, in
 the order they apply:
 
-**One link per screen.** A feed offers the same route once per row. The canvas draws one node for
+**One link per screen, chosen after ranking.** A feed offers the same route once per row. The canvas draws one node for
 the pattern either way (§13), so the second row costs a full cycle and changes nothing a reader
 sees. Duplicates by target screen are dropped before the cap, so the cap counts screens the walk
-can still learn from rather than repeats of one. The exception is the only thing that does change:
+can still learn from rather than repeats of one. Deduping runs **after** the ranking, so the link
+kept for a screen is the best one rather than the first in the DOM — otherwise the sidebar's
+`Profile` loses to a post author's avatar that happens to share its destination. The exception is the only thing that does change:
 **an overlay is its own state** (§3.1), so `…$image-viewer` on the second post is not a repeat of
 the first post and the rule never blocks it.
 
-**Then, unseen routes first.** A link into a route the map has never held teaches the most; a
-button with no target is next, because what it opens is unknown until it is pressed; a link into a
-route already on the map is last.
+**Then, order by the line it would draw.** Four tiers:
+
+| | rank |
+|---|---|
+| the map **holds that screen and has no way into it** — a seeded island | 1st |
+| the map **does not hold that screen at all** | 2nd |
+| a button with no target — unknown until it is pressed | 3rd |
+| the map already has a way into that screen | 4th |
+
+The first tier is the correction that matters. The rule used to ask *"is this route already on the
+map"*, and phase 2 seeds the whole declared route table **before** the walk starts — so every
+navigation link answered yes and sorted last. On Bluesky's logged-in home, all nine sidebar links
+(`/search`, `/notifications`, `/messages`, `/lists`, `/saved`, `/settings`, …) were cut by an action
+cap of ten, which went instead to posts and off-site articles. 49 of 66 screens ended with no line
+into them and the canvas drew a forest of islands rather than a tree.
+
+A seeded screen is on the map with no way in. That is precisely what needs clicking, and it is now
+first.
+
+**A link that leaves the app is not an action at all.** The collector keeps a link's origin, so an
+off-site `href` is marked `external` and never pressed — it can only open a tab or take the crawl
+off the map. Reducing every `href` to its pathname made `https://www.theguardian.com/politics/…`
+read as an in-app route with a path nothing had seen, which under the rule above is the front of
+the queue: 19 of Bluesky's home links, every one of them `target="_blank"` and so a guaranteed dead
+press.
 
 **Then, skip a line already drawn.** An action whose target screen the map holds *and* already has
 an edge into from this screen is recorded as untried with reason `known-target` and never pressed.
