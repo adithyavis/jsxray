@@ -305,8 +305,13 @@ class PersonaCrawl {
   private learned: string[] = [];
   private readonly deadline: number;
   private stateBudget: number;
+  /** §14 — the roots of the map, and the same set the canvas draws from. */
+  private readonly seedScreens: Set<string>;
 
   constructor(private readonly input: PersonaCrawlInput) {
+    this.seedScreens = new Set(
+      input.config.seedRoutes.map((route) => input.screenIdByRoute.get(route) ?? route),
+    );
     this.deadline = Date.now() + input.config.bounds.timeoutMs;
     // §8 — null is "no ceiling"; the deadline is then the only stop.
     this.stateBudget = input.config.bounds.maxStates ?? Number.POSITIVE_INFINITY;
@@ -791,8 +796,16 @@ class PersonaCrawl {
       .map((entry) => entry.action);
   }
 
-  /** §7.12 — does the map already show how a reader gets to this screen. */
+  /**
+   * §7.12 — does the map already show how a reader gets to this screen.
+   *
+   * A seed always answers yes. It is where the reader enters and where the canvas
+   * roots, so a line into it shows nothing, and following one spends a whole cycle
+   * to arrive back where the crawl began. On Bluesky that was 46 clicks of 102 —
+   * every "Home", every "Go back", every feed tab.
+   */
   private hasWayIn(screen: string): boolean {
+    if (this.seedScreens.has(screen)) return true;
     return this.input.edges.some(
       (edge) =>
         edge.discoveredBy === 'runtime' &&

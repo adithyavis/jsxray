@@ -8,7 +8,7 @@ import type {
   RendererProvider,
   RendererSession,
 } from '../src/providers.js';
-import { emptyDocument, type CrawlOutput } from '../src/index.js';
+import { emptyDocument, type CrawlOutput, type JsxrayDocument } from '../src/index.js';
 import { crawl } from '../src/stages/crawl.js';
 import type {
   Clickable,
@@ -47,6 +47,7 @@ const FEED: Clickable[] = [
   link('#news', 'A news article', null, true),
   // Last in the DOM, and the only screen already on the map with no way into it.
   link('#settings', 'Settings', '/settings'),
+  link('#home', 'Home', '/'),
 ];
 
 interface StubOptions {
@@ -162,13 +163,20 @@ async function run(options: StubOptions = {}, delayMs = 0): Promise<RunResult> {
     launch: async () => session,
   };
 
+  // `/settings` is declared by the router, so phase 2 seeds it — but it is not a
+  // seed route, so it is not a root and it still needs a line drawn into it.
+  const document = emptyDocument('/tmp/app', 'test');
+  document.screens = [
+    { id: '/settings', route: '/settings', isPage: true, meta: { groups: [] } },
+  ] as JsxrayDocument['screens'];
+
   const output = await crawl({
-    document: emptyDocument('/tmp/app', 'test'),
+    document,
     config: resolveConfig(
       {
         url: BASE,
         personas: [{ id: 'anon' }],
-        seedRoutes: ['/', '/settings'],
+        seedRoutes: ['/'],
         bounds: { maxDepth: 3, maxStates: 20, actionCap: 4, timeoutMs: 20_000 },
         capture: { delayMs },
       },
@@ -214,6 +222,17 @@ describe('which actions the walk spends its budget on', () => {
     expect(taps[0]).toBe('#settings');
   });
 
+  it('never spends a click arriving back at a seed', async () => {
+    // `/` is where the crawl entered and where the canvas roots. A line into it
+    // shows a reader nothing, so it sorts below everything that draws one.
+    const { taps, states, edges } = await run();
+    const feed = states.find((state) => state.signature === '/')!;
+
+    expect(taps).not.toContain('#home');
+    expect(feed.untriedActions.find((action) => action.target === '/')?.reason).toBe('cap');
+    expect(edges.filter((edge) => edge.to === '/' && edge.from !== '/')).toEqual([]);
+  });
+
   it('never presses a link that leaves the app, and says it did not', async () => {
     const { taps, states } = await run();
     const feed = states.find((state) => state.signature === '/')!;
@@ -235,11 +254,15 @@ describe('which actions the walk spends its budget on', () => {
     ).toEqual(['/post/3lmqk4rt2xc22', '/post/3lmqk4rt2xc23']);
   });
 
-  it('spends the action cap on screens, not on repeats of one', async () => {
-    // Five controls, three of them the same route: the cap of four is never reached.
+  it('spends the action cap on screens, and cuts what would draw nothing', async () => {
+    // Eight controls collapse to five destinations, and the cap of four cuts the
+    // one link that could not have added a line: the way back to the seed.
     const { states } = await run();
     const feed = states.find((state) => state.signature === '/')!;
-    expect(feed.untriedActions.some((action) => action.reason === 'cap')).toBe(false);
+
+    expect(
+      feed.untriedActions.filter((action) => action.reason === 'cap').map((a) => a.label),
+    ).toEqual(['Home']);
     expect(feed.deadActions).toEqual([]);
   });
 });
