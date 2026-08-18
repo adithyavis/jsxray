@@ -818,7 +818,14 @@ press.
 
 *A link back to a seed arrives where the crawl entered.* §14 roots the canvas at the seeds and
 draws no line into a root, so the press buys a picture nobody sees and a backtrack to pay for it.
-On Bluesky, 46 of 102 runtime edges landed on `/` — every "Home", every "Go back", every feed tab.
+On Bluesky, 46 of 102 runtime edges landed on `/`.
+
+Only 2 of those 46 came from a control carrying an address. The rest were `Go back` and feed tabs —
+**controls with no address, where the destination is unknowable until the press**. So the rule has
+two halves. Before the press, a link whose target is a seed is refused. After it, **an edge into a
+seed is never recorded**, and the control's label is remembered, so the same `Go back` is refused on
+every later screen. One wasted press per control instead of one per screen.
+
 Both refusals are recorded in `untriedActions` as `external` and `seed` (§7.5).
 
 **Then, skip a line already drawn.** An action whose target screen the map holds *and* already has

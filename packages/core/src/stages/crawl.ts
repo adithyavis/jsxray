@@ -307,6 +307,8 @@ class PersonaCrawl {
   private stateBudget: number;
   /** §14 — the roots of the map, and the same set the canvas draws from. */
   private readonly seedScreens: Set<string>;
+  /** Labels of controls already found to lead back to a root, on any screen. */
+  private readonly leadsHome = new Set<string>();
 
   constructor(private readonly input: PersonaCrawlInput) {
     this.seedScreens = new Set(
@@ -830,7 +832,7 @@ class PersonaCrawl {
         kept.push(action);
       } else if (action.external) {
         this.noteUntried(state, action, 'external');
-      } else if (this.targetsSeed(action.target)) {
+      } else if (this.targetsSeed(action.target) || this.leadsHome.has(action.label ?? '')) {
         this.noteUntried(state, action, 'seed');
       } else {
         kept.push(action);
@@ -1050,6 +1052,13 @@ class PersonaCrawl {
   }
 
   private addEdge(from: ScreenState, to: ScreenState, label: string | null, kind: string) {
+    // §14 — a seed is a root, and a root has no line into it. Some ways home cannot
+    // be seen before they are pressed: "Go back" and a feed tab carry no address, so
+    // the only place to refuse them is after the landing.
+    if (this.seedScreens.has(to.screenId)) {
+      this.leadsHome.add(label ?? '');
+      return;
+    }
     const id = `runtime:${this.input.persona.id}:${from.signature}->${to.signature}:${label ?? ''}`;
     if (this.input.edges.some((edge) => edge.id === id)) return;
     this.input.edges.push({

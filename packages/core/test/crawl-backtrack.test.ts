@@ -50,6 +50,9 @@ const FEED: Clickable[] = [
   link('#home', 'Home', '/'),
 ];
 
+/** No address, so where it goes is unknown until it is pressed — and it goes home. */
+const BACK: Clickable[] = [link('#back', 'Go back', null)];
+
 interface StubOptions {
   /** How old a screen must be before it stops looking like a skeleton. */
   readyAfterMs?: number;
@@ -111,7 +114,8 @@ class StubSession implements RendererSession {
   }
   async clickables(): Promise<Clickable[]> {
     if (this.sheet) return [link('#send', 'Send', null)];
-    return this.current === '/' ? FEED : [];
+    if (this.current === '/') return FEED;
+    return this.current === '/explore' ? BACK : [];
   }
   async forms(): Promise<FormGroup[]> {
     return [];
@@ -121,6 +125,11 @@ class StubSession implements RendererSession {
     this.taps.push(ref);
     if (ref === '#compose') {
       this.sheet = true;
+      return;
+    }
+    if (ref === '#back') {
+      this.current = '/';
+      this.sheet = false;
       return;
     }
     const target = FEED.find((item) => item.ref === ref)?.target;
@@ -235,6 +244,16 @@ describe('which actions the walk spends its budget on', () => {
     expect(edges.filter((edge) => edge.to === '/' && edge.from !== '/')).toEqual([]);
   });
 
+  it('draws no line into a root, even from a control it had to press to find out', async () => {
+    // "Go back" carries no address. The only place to refuse it is after the landing.
+    const { taps, edges, states } = await run();
+
+    // It is pressed from `/explore`, where going back really does move the app.
+    expect(taps).toContain('#back');
+    expect(states.map((state) => state.route)).toContain('/explore');
+    expect(edges.filter((edge) => edge.to === '/')).toEqual([]);
+  });
+
   it('never presses a link that leaves the app, and says it did not', async () => {
     const { taps, states } = await run();
     const feed = states.find((state) => state.signature === '/')!;
@@ -257,8 +276,8 @@ describe('which actions the walk spends its budget on', () => {
   });
 
   it('spends the action cap on screens, not on repeats or on the way home', async () => {
-    // Eight controls collapse to four destinations once the repeats, the off-site
-    // link and the way back to the seed are gone — so the cap of four is never hit.
+    // Eight controls collapse to four once the repeats, the off-site link and the
+    // named way home are gone — so the cap of four is never reached.
     const { states } = await run();
     const feed = states.find((state) => state.signature === '/')!;
 
