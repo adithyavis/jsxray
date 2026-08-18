@@ -457,7 +457,7 @@ class PersonaCrawl {
         const found = [...(await session.clickables()), ...(await session.forms())];
         const reachable = actionsWithinOverlay(
           state,
-          this.safeActions(state, this.inApp(state, found)),
+          this.safeActions(state, this.worthPressing(state, found)),
         );
         // Rank before deduping, so the best link to a screen is the one kept: a nav
         // item beats a post in the feed that happens to share its destination.
@@ -815,16 +815,34 @@ class PersonaCrawl {
   }
 
   /**
-   * §7.12 — a link that leaves the app is not a route. It can only open a tab or
-   * take the crawl off the map, and either way the press teaches nothing.
+   * §7.12 — two kinds of link that can never draw a line, refused before the action
+   * cap gets a say. Ranking them last is not enough: on a quiet screen the cap never
+   * binds, and the last-ranked link is pressed anyway.
+   *
+   * A link that **leaves the app** is not a route. It can only open a tab or take
+   * the crawl off the map. A link back to a **seed** arrives where the crawl
+   * entered; the canvas roots there and draws nothing into it (§14).
    */
-  private inApp<T extends Clickable | FormGroup>(state: ScreenState, actions: T[]): T[] {
+  private worthPressing<T extends Clickable | FormGroup>(state: ScreenState, actions: T[]): T[] {
     const kept: T[] = [];
     for (const action of actions) {
-      if (!isForm(action) && action.external) this.noteUntried(state, action, 'external');
-      else kept.push(action);
+      if (isForm(action)) {
+        kept.push(action);
+      } else if (action.external) {
+        this.noteUntried(state, action, 'external');
+      } else if (this.targetsSeed(action.target)) {
+        this.noteUntried(state, action, 'seed');
+      } else {
+        kept.push(action);
+      }
     }
     return kept;
+  }
+
+  /** §14 — does this link lead back to a root of the map. */
+  private targetsSeed(target: string | null): boolean {
+    if (!target?.startsWith('/')) return false;
+    return this.seedScreens.has(this.screenIdOf(target));
   }
 
   /** True once this persona's map holds both the target screen and a line into it. */

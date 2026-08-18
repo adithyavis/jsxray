@@ -217,6 +217,7 @@ export type UntriedReason =
   | 'ignored'
   | 'unsafe'
   | 'external'
+  | 'seed'
   | (string & {});
 
 export interface UntriedAction {

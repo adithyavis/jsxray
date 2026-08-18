@@ -229,7 +229,9 @@ describe('which actions the walk spends its budget on', () => {
     const feed = states.find((state) => state.signature === '/')!;
 
     expect(taps).not.toContain('#home');
-    expect(feed.untriedActions.find((action) => action.target === '/')?.reason).toBe('cap');
+    // Refused outright, not merely ranked last: on a quiet screen the cap never
+    // binds and a last-ranked link is still pressed.
+    expect(feed.untriedActions.find((action) => action.target === '/')?.reason).toBe('seed');
     expect(edges.filter((edge) => edge.to === '/' && edge.from !== '/')).toEqual([]);
   });
 
@@ -254,15 +256,13 @@ describe('which actions the walk spends its budget on', () => {
     ).toEqual(['/post/3lmqk4rt2xc22', '/post/3lmqk4rt2xc23']);
   });
 
-  it('spends the action cap on screens, and cuts what would draw nothing', async () => {
-    // Eight controls collapse to five destinations, and the cap of four cuts the
-    // one link that could not have added a line: the way back to the seed.
+  it('spends the action cap on screens, not on repeats or on the way home', async () => {
+    // Eight controls collapse to four destinations once the repeats, the off-site
+    // link and the way back to the seed are gone — so the cap of four is never hit.
     const { states } = await run();
     const feed = states.find((state) => state.signature === '/')!;
 
-    expect(
-      feed.untriedActions.filter((action) => action.reason === 'cap').map((a) => a.label),
-    ).toEqual(['Home']);
+    expect(feed.untriedActions.filter((action) => action.reason === 'cap')).toEqual([]);
     expect(feed.deadActions).toEqual([]);
   });
 });

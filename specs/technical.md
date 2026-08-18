@@ -608,6 +608,7 @@ the label, the target, and the reason:
 | `ignored` | `ignore.navigation` covers the target, or it is a route handler (§7.9) |
 | `unsafe` | the safety guard refused it — a destructive or account-writing control (§9) |
 | `external` | the link leaves the app, so it is not a route (§7.12) |
+| `seed` | the link leads back to a root of the map, which needs no line into it (§14) |
 
 Without it, "this screen was exhausted" and "this screen ran out of budget" look identical on the
 canvas, and the second is the one a reader has to know about. It is also the honest denominator
@@ -805,12 +806,20 @@ into them and the canvas drew a forest of islands rather than a tree.
 A seeded screen is on the map with no way in. That is precisely what needs clicking, and it is now
 first.
 
-**A link that leaves the app is not an action at all.** The collector keeps a link's origin, so an
-off-site `href` is marked `external` and never pressed — it can only open a tab or take the crawl
-off the map. Reducing every `href` to its pathname made `https://www.theguardian.com/politics/…`
+**Two kinds of link are refused before the cap gets a say.** Ranking them last is not enough: on a
+quiet screen the cap never binds, so the last-ranked link is pressed anyway.
+
+*A link that leaves the app is not a route.* The collector keeps a link's origin, so an off-site
+`href` is marked `external` and never pressed — it can only open a tab or take the crawl off the
+map. Reducing every `href` to its pathname made `https://www.theguardian.com/politics/…`
 read as an in-app route with a path nothing had seen, which under the rule above is the front of
 the queue: 19 of Bluesky's home links, every one of them `target="_blank"` and so a guaranteed dead
 press.
+
+*A link back to a seed arrives where the crawl entered.* §14 roots the canvas at the seeds and
+draws no line into a root, so the press buys a picture nobody sees and a backtrack to pay for it.
+On Bluesky, 46 of 102 runtime edges landed on `/` — every "Home", every "Go back", every feed tab.
+Both refusals are recorded in `untriedActions` as `external` and `seed` (§7.5).
 
 **Then, skip a line already drawn.** An action whose target screen the map holds *and* already has
 an edge into from this screen is recorded as untried with reason `known-target` and never pressed.
