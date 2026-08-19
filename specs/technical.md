@@ -170,10 +170,18 @@ stateSignature = screenId                              // base state
 the page marked `aria-hidden`/`inert`, which is how Radix, Headless UI, and MUI signal a modal
 when the role is missing.
 
+The third signal names what is *left over*, so it only counts what is also a **layer**: an element
+carrying an overlay role, or one the page paints over — `position: fixed` or `absolute`. An app that
+parks an empty portal container in its body marks a sibling on every screen, and without that test
+the page root is what remains, which reads the whole document as an overlay.
+
 **Identity is the overlay's accessible name**, slugified — `/settings$confirm-deletion`. Readable,
 stable across runs, and a node title for free. An unnamed overlay falls back to a hash of its own
-subtree, never the page's. Stacked overlays append in stacking order, outermost first:
-`/settings$manage-billing$confirm-deletion`.
+subtree, never the page's — and of the roles and labels in that subtree, never its markup. A
+generated id, a popover's measured offset and a re-render behind it all move between two openings
+of one menu, and `outerHTML` carries all three, so a hash of the markup names the same overlay
+something new each time and no walk can return to it. Stacked overlays append in stacking order,
+outermost first: `/settings$manage-billing$confirm-deletion`.
 
 The narrowness is the point. A hash of the whole page forks `/inbox` every time a message arrives,
 because twelve rows and thirteen are different structures — excluding *text* does not fix that.
