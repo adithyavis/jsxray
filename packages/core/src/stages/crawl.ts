@@ -1055,7 +1055,11 @@ class PersonaCrawl {
     // §14 — a seed is a root, and a root has no line into it. Some ways home cannot
     // be seen before they are pressed: "Go back" and a feed tab carry no address, so
     // the only place to refuse them is after the landing.
-    if (this.seedScreens.has(to.screenId)) {
+    //
+    // The root is the state, not the screen. A sheet opened over a seed shares that
+    // seed's screen id and is still somewhere the reader has to be shown the way to,
+    // and calling its opener a way home retires that label on every other screen too.
+    if (this.seedScreens.has(to.screenId) && !to.overlays.length) {
       this.leadsHome.add(label ?? '');
       return;
     }

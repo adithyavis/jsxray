@@ -251,7 +251,17 @@ describe('which actions the walk spends its budget on', () => {
     // It is pressed from `/explore`, where going back really does move the app.
     expect(taps).toContain('#back');
     expect(states.map((state) => state.route)).toContain('/explore');
-    expect(edges.filter((edge) => edge.to === '/')).toEqual([]);
+    // The root state, not the screen: a sheet over `/` carries `/` as its screen id
+    // and is still a place the reader has to be shown the way to.
+    expect(edges.filter((edge) => edge.toState === '/')).toEqual([]);
+  });
+
+  it('draws the line into a sheet opened over a root', async () => {
+    const { edges } = await run();
+
+    expect(
+      edges.filter((edge) => edge.fromState === '/' && edge.toState === '/$compose'),
+    ).toHaveLength(1);
   });
 
   it('never presses a link that leaves the app, and says it did not', async () => {
