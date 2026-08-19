@@ -2,11 +2,12 @@ import http from 'node:http';
 
 const ADMIN = 'admin@example.com';
 
-const shell = (title, body) => `<!doctype html>
+const shell = (title, body, parked = '') => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>${title}</title></head>
 <body>
 <nav><a href="/">Home</a> <a href="/dashboard">Dashboard</a> <a href="/logout">Log out</a></nav>
 ${body}
+${parked}
 </body></html>`;
 
 const pages = {
@@ -59,6 +60,38 @@ const pages = {
          <button type="button" onclick="document.getElementById('sheet').hidden=true">Close</button>
        </div>`,
     ),
+
+  /*
+   * The shape a portalling app has: an empty container parked in the body, marked
+   * aria-hidden on every screen, and a menu that opens into a layer of its own with
+   * no dialog role to be found by. The row count and the layer's offset both move
+   * between two openings, so nothing that hashes markup can name either one twice.
+   */
+  '/library': () =>
+    shell(
+      'Library',
+      `<h1>Library</h1>
+       <ul id="shelf"></ul>
+       <button id="shelf-options" type="button" onclick="openMenu()">Shelf options</button>
+       <script>
+         const rows = document.getElementById('shelf');
+         for (let i = 0; i < 3 + Math.floor(Math.random() * 5); i++) {
+           rows.insertAdjacentHTML('beforeend', '<li>Book ' + Math.random() + '</li>');
+         }
+         function openMenu() {
+           if (document.getElementById('shelf-menu')) return;
+           const layer = document.createElement('div');
+           layer.id = 'shelf-menu';
+           layer.style.cssText = 'position:fixed;top:' + (10 + Math.floor(Math.random() * 40)) + 'px;left:10px';
+           layer.innerHTML = '<a id="to-terms" href="/shelf-terms" role="menuitem">Shelf terms</a>';
+           document.body.append(layer);
+         }
+       </script>`,
+      '<div id="portal-root" aria-hidden="true"></div>',
+    ),
+
+  // Behind the menu and nowhere else, so reaching it proves the menu was worked.
+  '/shelf-terms': () => shell('Shelf terms', '<h1>Shelf terms</h1>'),
 
   '/admin': (session) =>
     session === ADMIN

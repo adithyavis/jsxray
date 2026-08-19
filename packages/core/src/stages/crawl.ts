@@ -305,8 +305,15 @@ class PersonaCrawl {
   private learned: string[] = [];
   private readonly deadline: number;
   private stateBudget: number;
+  /** §14 — the roots of the map, and the same set the canvas draws from. */
+  private readonly seedScreens: Set<string>;
+  /** Labels of controls already found to lead back to a root, on any screen. */
+  private readonly leadsHome = new Set<string>();
 
   constructor(private readonly input: PersonaCrawlInput) {
+    this.seedScreens = new Set(
+      input.config.seedRoutes.map((route) => input.screenIdByRoute.get(route) ?? route),
+    );
     this.deadline = Date.now() + input.config.bounds.timeoutMs;
     // §8 — null is "no ceiling"; the deadline is then the only stop.
     this.stateBudget = input.config.bounds.maxStates ?? Number.POSITIVE_INFINITY;
@@ -448,20 +455,16 @@ class PersonaCrawl {
       )
         continue;
 
-      const collected = await timed(`  collect ${state.signature}`, async () =>
-        this.byWhatTheyTeach(
-          this.oneLinkPerScreen(
-            state,
-            actionsWithinOverlay(
-              state,
-              this.safeActions(state, [
-                ...(await session.clickables()),
-                ...(await session.forms()),
-              ]),
-            ),
-          ),
-        ),
-      );
+      const collected = await timed(`  collect ${state.signature}`, async () => {
+        const found = [...(await session.clickables()), ...(await session.forms())];
+        const reachable = actionsWithinOverlay(
+          state,
+          this.safeActions(state, this.worthPressing(state, found)),
+        );
+        // Rank before deduping, so the best link to a screen is the one kept: a nav
+        // item beats a post in the feed that happens to share its destination.
+        return this.oneLinkPerScreen(state, this.byWhatTheyTeach(reachable));
+      });
       const actions = collected.slice(0, config.bounds.actionCap);
       for (const cut of collected.slice(config.bounds.actionCap)) this.noteUntried(state, cut, 'cap');
       trace(`  ${actions.length} actions on ${state.signature} (${collected.length} collected)`);
@@ -775,20 +778,73 @@ class PersonaCrawl {
   }
 
   /**
-   * §2 of specs/performance.md — order by what an action can teach. A link into a
-   * route the map has never seen first; then a button with no target, because what
-   * it opens is unknown until it is pressed; a link into a route already drawn last.
+   * §7.12 — order by the line an action would draw, not by the screen it would find.
+   * The old rule asked "is this route already on the map"; phase 2 seeds the whole
+   * route table before the walk, so every nav link answered yes and sorted last, and
+   * Bluesky's sidebar never survived the action cap. A seeded screen with no way into
+   * it is the one thing the map is actually missing.
    */
   private byWhatTheyTeach<T extends Clickable | FormGroup>(actions: T[]): T[] {
     const rank = (action: T): number => {
-      if (isForm(action)) return 1;
-      if (!action.target) return 1;
-      return this.reached(this.screenIdOf(action.target)) ? 2 : 0;
+      const target = isForm(action) ? null : action.target;
+      if (!target?.startsWith('/')) return 2; // a button — unknown until pressed
+      const screen = this.screenIdOf(target);
+      if (!this.reached(screen)) return 1; // a screen the map does not hold yet
+      return this.hasWayIn(screen) ? 3 : 0; // holds it: already drawn, or an island
     };
     return actions
       .map((action, index) => ({ action, index, rank: rank(action) }))
       .sort((a, b) => a.rank - b.rank || a.index - b.index)
       .map((entry) => entry.action);
+  }
+
+  /**
+   * §7.12 — does the map already show how a reader gets to this screen.
+   *
+   * A seed always answers yes. It is where the reader enters and where the canvas
+   * roots, so a line into it shows nothing, and following one spends a whole cycle
+   * to arrive back where the crawl began. On Bluesky that was 46 clicks of 102 —
+   * every "Home", every "Go back", every feed tab.
+   */
+  private hasWayIn(screen: string): boolean {
+    if (this.seedScreens.has(screen)) return true;
+    return this.input.edges.some(
+      (edge) =>
+        edge.discoveredBy === 'runtime' &&
+        edge.personaId === this.input.persona.id &&
+        edge.to === screen,
+    );
+  }
+
+  /**
+   * §7.12 — two kinds of link that can never draw a line, refused before the action
+   * cap gets a say. Ranking them last is not enough: on a quiet screen the cap never
+   * binds, and the last-ranked link is pressed anyway.
+   *
+   * A link that **leaves the app** is not a route. It can only open a tab or take
+   * the crawl off the map. A link back to a **seed** arrives where the crawl
+   * entered; the canvas roots there and draws nothing into it (§14).
+   */
+  private worthPressing<T extends Clickable | FormGroup>(state: ScreenState, actions: T[]): T[] {
+    const kept: T[] = [];
+    for (const action of actions) {
+      if (isForm(action)) {
+        kept.push(action);
+      } else if (action.external) {
+        this.noteUntried(state, action, 'external');
+      } else if (this.targetsSeed(action.target) || this.leadsHome.has(action.label ?? '')) {
+        this.noteUntried(state, action, 'seed');
+      } else {
+        kept.push(action);
+      }
+    }
+    return kept;
+  }
+
+  /** §14 — does this link lead back to a root of the map. */
+  private targetsSeed(target: string | null): boolean {
+    if (!target?.startsWith('/')) return false;
+    return this.seedScreens.has(this.screenIdOf(target));
   }
 
   /** True once this persona's map holds both the target screen and a line into it. */
@@ -996,6 +1052,17 @@ class PersonaCrawl {
   }
 
   private addEdge(from: ScreenState, to: ScreenState, label: string | null, kind: string) {
+    // §14 — a seed is a root, and a root has no line into it. Some ways home cannot
+    // be seen before they are pressed: "Go back" and a feed tab carry no address, so
+    // the only place to refuse them is after the landing.
+    //
+    // The root is the state, not the screen. A sheet opened over a seed shares that
+    // seed's screen id and is still somewhere the reader has to be shown the way to,
+    // and calling its opener a way home retires that label on every other screen too.
+    if (this.seedScreens.has(to.screenId) && !to.overlays.length) {
+      this.leadsHome.add(label ?? '');
+      return;
+    }
     const id = `runtime:${this.input.persona.id}:${from.signature}->${to.signature}:${label ?? ''}`;
     if (this.input.edges.some((edge) => edge.id === id)) return;
     this.input.edges.push({

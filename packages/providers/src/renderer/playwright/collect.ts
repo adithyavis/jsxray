@@ -54,6 +54,26 @@ const labelOf = (el) => {
 };
 
 const inOverlay = (el) => Boolean(el.closest('[role=dialog],[role=alertdialog],[aria-modal=true],dialog[open]'));
+
+const CLICKABLE = 'a[href],button,[role=button],[role=link],[role=menuitem],[role=tab],input[type=submit],input[type=button],summary';
+
+const OVERLAY_ROLE = '[role=dialog],[role=alertdialog],[role=menu],[role=listbox],[role=tooltip]';
+
+/**
+ * §3.1 — an unnamed overlay is identified by its own subtree, and this is what "its
+ * own subtree" has to mean: the roles and labels it offers, nothing else. Between two
+ * openings of one menu, a generated id, a popover's measured offset and every re-render
+ * behind it all move, and outerHTML carries all three — so a hash of the markup names
+ * the overlay something new each time, and nothing can be got back to twice.
+ */
+const shapeOf = (el) => {
+  const parts = [el.getAttribute('role') ?? el.tagName.toLowerCase()];
+  for (const control of el.querySelectorAll(CLICKABLE)) {
+    if (!visible(control)) continue;
+    parts.push((control.getAttribute('role') ?? control.tagName.toLowerCase()) + ':' + (labelOf(control) ?? ''));
+  }
+  return parts.join('|');
+};
 `;
 
 /** §3.1 — three signals, in order. */
@@ -75,7 +95,7 @@ ${PREAMBLE}
       name: resolved.length ? resolved.slice(0, 80) : null,
       role: el.getAttribute('role') ?? el.tagName.toLowerCase(),
       via,
-      subtreeHash: digest(el.outerHTML.slice(0, 4000)),
+      subtreeHash: digest(shapeOf(el)),
     });
   };
 
@@ -88,13 +108,29 @@ ${PREAMBLE}
     if (el.matches(':popover-open')) add(el, 'dialog-element');
   });
 
+  /*
+   * §3.1 — the rest of the page marked aria-hidden/inert, which is how Radix,
+   * Headless UI and MUI announce a modal that carries no role of its own.
+   *
+   * What is left over is the overlay only if it is a layer. An app that parks an
+   * empty portal container in the body marks a sibling on every screen, and then the
+   * page root is what remains — which reads the whole document as an overlay, forks
+   * the screen on every re-render, and leaves a state no walk can return to.
+   */
+  const layer = (el) => {
+    const roled = el.matches(OVERLAY_ROLE) ? el : el.querySelector(OVERLAY_ROLE);
+    if (roled && visible(roled)) return roled;
+    const position = getComputedStyle(el).position;
+    return position === 'fixed' || position === 'absolute' ? el : null;
+  };
+
   const hiddenSiblings = [...document.body.children].filter(
     (el) => el.getAttribute('aria-hidden') === 'true' || el.hasAttribute('inert'),
   );
   if (hiddenSiblings.length) {
     [...document.body.children]
       .filter((el) => !hiddenSiblings.includes(el) && visible(el))
-      .forEach((el) => add(el, 'inert-background'));
+      .forEach((el) => add(layer(el), 'inert-background'));
   }
 
   const depthOf = (el) => {
@@ -112,11 +148,10 @@ ${PREAMBLE}
 export const COLLECT_CLICKABLES = `(() => {
 ${PREAMBLE}
 
-  const selector = 'a[href],button,[role=button],[role=link],[role=menuitem],[role=tab],input[type=submit],input[type=button],summary';
   const seen = new Set();
   const results = [];
 
-  for (const el of document.querySelectorAll(selector)) {
+  for (const el of document.querySelectorAll(CLICKABLE)) {
     if (!visible(el)) continue;
     if (el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true') continue;
     if (el.closest('form') && el.matches('[type=submit],button:not([type=button])')) continue;
@@ -125,10 +160,18 @@ ${PREAMBLE}
     if (!ref || seen.has(ref)) continue;
     seen.add(ref);
 
+    // §7.12 — keep the origin long enough to answer "does this leave the app".
+    // Reducing every href to its pathname made a Guardian article read as an
+    // in-app route with a path nothing had seen, which is the front of the queue.
     let target = null;
+    let external = false;
     const href = el.getAttribute('href');
     if (href && !href.startsWith('#') && !/^(mailto|tel|javascript):/i.test(href)) {
-      try { target = new URL(href, location.href).pathname; } catch { target = href; }
+      try {
+        const url = new URL(href, location.href);
+        if (url.origin === location.origin) target = url.pathname;
+        else external = true;
+      } catch { target = href; }
     }
 
     results.push({
@@ -137,6 +180,7 @@ ${PREAMBLE}
       target,
       role: el.getAttribute('role') ?? el.tagName.toLowerCase(),
       inOverlay: inOverlay(el),
+      external,
     });
   }
 

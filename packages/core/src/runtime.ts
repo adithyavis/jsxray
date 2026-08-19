@@ -3,9 +3,12 @@ export type ElementRef = string;
 export interface Clickable {
   ref: ElementRef;
   label: string | null;
+  /** In-app path only. An off-site link has `null` here and `external` set. */
   target: string | null;
   role: string | null;
   inOverlay: boolean;
+  /** §7.12 — it leaves the app, so it is not a route. Absent when unknowable. */
+  external?: boolean;
 }
 
 export interface FormControl {

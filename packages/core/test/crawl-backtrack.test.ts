@@ -8,7 +8,7 @@ import type {
   RendererProvider,
   RendererSession,
 } from '../src/providers.js';
-import { emptyDocument, type CrawlOutput } from '../src/index.js';
+import { emptyDocument, type CrawlOutput, type JsxrayDocument } from '../src/index.js';
 import { crawl } from '../src/stages/crawl.js';
 import type {
   Clickable,
@@ -20,12 +20,18 @@ import type {
 
 const BASE = 'http://localhost:9996';
 
-const link = (ref: string, label: string, target: string | null): Clickable => ({
+const link = (
+  ref: string,
+  label: string,
+  target: string | null,
+  external = false,
+): Clickable => ({
   ref,
   label,
   target,
   role: target ? 'link' : 'button',
   inOverlay: false,
+  external,
 });
 
 /**
@@ -38,7 +44,14 @@ const FEED: Clickable[] = [
   link('#post-3', 'Third post', '/post/3lmqk4rt2xc23'),
   link('#compose', 'Compose', null),
   link('#explore', 'Explore', '/explore'),
+  link('#news', 'A news article', null, true),
+  // Last in the DOM, and the only screen already on the map with no way into it.
+  link('#settings', 'Settings', '/settings'),
+  link('#home', 'Home', '/'),
 ];
+
+/** No address, so where it goes is unknown until it is pressed — and it goes home. */
+const BACK: Clickable[] = [link('#back', 'Go back', null)];
 
 interface StubOptions {
   /** How old a screen must be before it stops looking like a skeleton. */
@@ -101,7 +114,8 @@ class StubSession implements RendererSession {
   }
   async clickables(): Promise<Clickable[]> {
     if (this.sheet) return [link('#send', 'Send', null)];
-    return this.current === '/' ? FEED : [];
+    if (this.current === '/') return FEED;
+    return this.current === '/explore' ? BACK : [];
   }
   async forms(): Promise<FormGroup[]> {
     return [];
@@ -111,6 +125,11 @@ class StubSession implements RendererSession {
     this.taps.push(ref);
     if (ref === '#compose') {
       this.sheet = true;
+      return;
+    }
+    if (ref === '#back') {
+      this.current = '/';
+      this.sheet = false;
       return;
     }
     const target = FEED.find((item) => item.ref === ref)?.target;
@@ -153,8 +172,15 @@ async function run(options: StubOptions = {}, delayMs = 0): Promise<RunResult> {
     launch: async () => session,
   };
 
+  // `/settings` is declared by the router, so phase 2 seeds it — but it is not a
+  // seed route, so it is not a root and it still needs a line drawn into it.
+  const document = emptyDocument('/tmp/app', 'test');
+  document.screens = [
+    { id: '/settings', route: '/settings', isPage: true, meta: { groups: [] } },
+  ] as JsxrayDocument['screens'];
+
   const output = await crawl({
-    document: emptyDocument('/tmp/app', 'test'),
+    document,
     config: resolveConfig(
       {
         url: BASE,
@@ -198,9 +224,54 @@ describe('getting back to a state', () => {
 });
 
 describe('which actions the walk spends its budget on', () => {
-  it('works a route the map has never seen before one it already holds', async () => {
+  it('draws the missing line first, whatever the DOM order', async () => {
+    // `/settings` was seeded, so the map holds the screen and no way into it. It is
+    // last in the DOM and still goes first, because it is what the map is missing.
     const { taps } = await run();
-    expect(taps[0]).toBe('#post-1');
+    expect(taps[0]).toBe('#settings');
+  });
+
+  it('never spends a click arriving back at a seed', async () => {
+    // `/` is where the crawl entered and where the canvas roots. A line into it
+    // shows a reader nothing, so it sorts below everything that draws one.
+    const { taps, states, edges } = await run();
+    const feed = states.find((state) => state.signature === '/')!;
+
+    expect(taps).not.toContain('#home');
+    // Refused outright, not merely ranked last: on a quiet screen the cap never
+    // binds and a last-ranked link is still pressed.
+    expect(feed.untriedActions.find((action) => action.target === '/')?.reason).toBe('seed');
+    expect(edges.filter((edge) => edge.to === '/' && edge.from !== '/')).toEqual([]);
+  });
+
+  it('draws no line into a root, even from a control it had to press to find out', async () => {
+    // "Go back" carries no address. The only place to refuse it is after the landing.
+    const { taps, edges, states } = await run();
+
+    // It is pressed from `/explore`, where going back really does move the app.
+    expect(taps).toContain('#back');
+    expect(states.map((state) => state.route)).toContain('/explore');
+    // The root state, not the screen: a sheet over `/` carries `/` as its screen id
+    // and is still a place the reader has to be shown the way to.
+    expect(edges.filter((edge) => edge.toState === '/')).toEqual([]);
+  });
+
+  it('draws the line into a sheet opened over a root', async () => {
+    const { edges } = await run();
+
+    expect(
+      edges.filter((edge) => edge.fromState === '/' && edge.toState === '/$compose'),
+    ).toHaveLength(1);
+  });
+
+  it('never presses a link that leaves the app, and says it did not', async () => {
+    const { taps, states } = await run();
+    const feed = states.find((state) => state.signature === '/')!;
+
+    expect(taps).not.toContain('#news');
+    expect(
+      feed.untriedActions.filter((action) => action.reason === 'external').map((a) => a.label),
+    ).toEqual(['A news article']);
   });
 
   it('presses one post, not every post, and says why the rest went untried', async () => {
@@ -214,11 +285,13 @@ describe('which actions the walk spends its budget on', () => {
     ).toEqual(['/post/3lmqk4rt2xc22', '/post/3lmqk4rt2xc23']);
   });
 
-  it('spends the action cap on screens, not on repeats of one', async () => {
-    // Five controls, three of them the same route: the cap of four is never reached.
+  it('spends the action cap on screens, not on repeats or on the way home', async () => {
+    // Eight controls collapse to four once the repeats, the off-site link and the
+    // named way home are gone — so the cap of four is never reached.
     const { states } = await run();
     const feed = states.find((state) => state.signature === '/')!;
-    expect(feed.untriedActions.some((action) => action.reason === 'cap')).toBe(false);
+
+    expect(feed.untriedActions.filter((action) => action.reason === 'cap')).toEqual([]);
     expect(feed.deadActions).toEqual([]);
   });
 });

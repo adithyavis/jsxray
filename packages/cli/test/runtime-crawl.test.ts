@@ -61,7 +61,7 @@ beforeAll(async () => {
             },
           },
         ],
-        seedRoutes: ['/', '/settings', '/signup', '/secrets', '/billing'],
+        seedRoutes: ['/', '/settings', '/signup', '/secrets', '/billing', '/library'],
         ignore: { screenshots: ['/secrets'] },
         bounds: { maxDepth: 3, maxStates: 40, actionCap: 8, timeoutMs: 120_000 },
         // The fixture paints in one pass, so there is no skeleton to wait out (§7.10).
@@ -93,6 +93,32 @@ describe('crawl', () => {
 
   it('gives an overlay its own state, named after its accessible name', () => {
     expect(signatures('user')).toContain('/settings$rename-workspace');
+  });
+
+  it('makes no overlay of the page a parked portal container left behind', () => {
+    // `/library` keeps an aria-hidden portal in its body on every visit. Reading every
+    // sibling of it as an overlay makes a state of the nav, the heading and the list,
+    // and each one is a hash of page content that never comes back the same.
+    const opened = signatures('user').filter((signature) => signature.startsWith('/library$'));
+    expect(signatures('user')).toContain('/library');
+    expect(opened).toHaveLength(1);
+  });
+
+  it('gets back into an unnamed menu and presses what is inside it', () => {
+    // The layer carries no dialog role and no name, and both its offset and the list
+    // behind it move between two openings. Only a name drawn from what the overlay
+    // itself offers survives that, and without one the walk never returns to press
+    // the one control that reaches `/shelf-terms`.
+    const [menu] = signatures('user').filter((signature) => signature.startsWith('/library$'));
+    expect(menu).toBeDefined();
+    expect(
+      document.edges.filter(
+        (edge) =>
+          edge.personaId === 'user' &&
+          edge.fromState === menu &&
+          edge.toState === '/shelf-terms',
+      ),
+    ).toHaveLength(1);
   });
 
   it('clears a crawled persona’s stale captures, and leaves other personas alone', () => {

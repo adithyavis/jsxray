@@ -170,10 +170,18 @@ stateSignature = screenId                              // base state
 the page marked `aria-hidden`/`inert`, which is how Radix, Headless UI, and MUI signal a modal
 when the role is missing.
 
+The third signal names what is *left over*, so it only counts what is also a **layer**: an element
+carrying an overlay role, or one the page paints over — `position: fixed` or `absolute`. An app that
+parks an empty portal container in its body marks a sibling on every screen, and without that test
+the page root is what remains, which reads the whole document as an overlay.
+
 **Identity is the overlay's accessible name**, slugified — `/settings$confirm-deletion`. Readable,
 stable across runs, and a node title for free. An unnamed overlay falls back to a hash of its own
-subtree, never the page's. Stacked overlays append in stacking order, outermost first:
-`/settings$manage-billing$confirm-deletion`.
+subtree, never the page's — and of the roles and labels in that subtree, never its markup. A
+generated id, a popover's measured offset and a re-render behind it all move between two openings
+of one menu, and `outerHTML` carries all three, so a hash of the markup names the same overlay
+something new each time and no walk can return to it. Stacked overlays append in stacking order,
+outermost first: `/settings$manage-billing$confirm-deletion`.
 
 The narrowness is the point. A hash of the whole page forks `/inbox` every time a message arrives,
 because twelve rows and thirteen are different structures — excluding *text* does not fix that.
@@ -607,6 +615,8 @@ the label, the target, and the reason:
 | `unreachable` | the crawl could not get back to the screen, so the rest went untried (§7.4) |
 | `ignored` | `ignore.navigation` covers the target, or it is a route handler (§7.9) |
 | `unsafe` | the safety guard refused it — a destructive or account-writing control (§9) |
+| `external` | the link leaves the app, so it is not a route (§7.12) |
+| `seed` | the link leads back to a root of the map, which needs no line into it (§14) |
 
 Without it, "this screen was exhausted" and "this screen ran out of budget" look identical on the
 canvas, and the second is the one a reader has to know about. It is also the honest denominator
@@ -776,16 +786,55 @@ label and its target — and presses that instead. Only when nothing matches is 
 A screen offers more actions than the cap allows, and they are not worth the same. Three rules, in
 the order they apply:
 
-**One link per screen.** A feed offers the same route once per row. The canvas draws one node for
+**One link per screen, chosen after ranking.** A feed offers the same route once per row. The canvas draws one node for
 the pattern either way (§13), so the second row costs a full cycle and changes nothing a reader
 sees. Duplicates by target screen are dropped before the cap, so the cap counts screens the walk
-can still learn from rather than repeats of one. The exception is the only thing that does change:
+can still learn from rather than repeats of one. Deduping runs **after** the ranking, so the link
+kept for a screen is the best one rather than the first in the DOM — otherwise the sidebar's
+`Profile` loses to a post author's avatar that happens to share its destination. The exception is the only thing that does change:
 **an overlay is its own state** (§3.1), so `…$image-viewer` on the second post is not a repeat of
 the first post and the rule never blocks it.
 
-**Then, unseen routes first.** A link into a route the map has never held teaches the most; a
-button with no target is next, because what it opens is unknown until it is pressed; a link into a
-route already on the map is last.
+**Then, order by the line it would draw.** Four tiers:
+
+| | rank |
+|---|---|
+| the map **holds that screen and has no way into it** — a seeded island | 1st |
+| the map **does not hold that screen at all** | 2nd |
+| a button with no target — unknown until it is pressed | 3rd |
+| the map already has a way into that screen | 4th |
+
+The first tier is the correction that matters. The rule used to ask *"is this route already on the
+map"*, and phase 2 seeds the whole declared route table **before** the walk starts — so every
+navigation link answered yes and sorted last. On Bluesky's logged-in home, all nine sidebar links
+(`/search`, `/notifications`, `/messages`, `/lists`, `/saved`, `/settings`, …) were cut by an action
+cap of ten, which went instead to posts and off-site articles. 49 of 66 screens ended with no line
+into them and the canvas drew a forest of islands rather than a tree.
+
+A seeded screen is on the map with no way in. That is precisely what needs clicking, and it is now
+first.
+
+**Two kinds of link are refused before the cap gets a say.** Ranking them last is not enough: on a
+quiet screen the cap never binds, so the last-ranked link is pressed anyway.
+
+*A link that leaves the app is not a route.* The collector keeps a link's origin, so an off-site
+`href` is marked `external` and never pressed — it can only open a tab or take the crawl off the
+map. Reducing every `href` to its pathname made `https://www.theguardian.com/politics/…`
+read as an in-app route with a path nothing had seen, which under the rule above is the front of
+the queue: 19 of Bluesky's home links, every one of them `target="_blank"` and so a guaranteed dead
+press.
+
+*A link back to a seed arrives where the crawl entered.* §14 roots the canvas at the seeds and
+draws no line into a root, so the press buys a picture nobody sees and a backtrack to pay for it.
+On Bluesky, 46 of 102 runtime edges landed on `/`.
+
+Only 2 of those 46 came from a control carrying an address. The rest were `Go back` and feed tabs —
+**controls with no address, where the destination is unknowable until the press**. So the rule has
+two halves. Before the press, a link whose target is a seed is refused. After it, **an edge into a
+seed is never recorded**, and the control's label is remembered, so the same `Go back` is refused on
+every later screen. One wasted press per control instead of one per screen.
+
+Both refusals are recorded in `untriedActions` as `external` and `seed` (§7.5).
 
 **Then, skip a line already drawn.** An action whose target screen the map holds *and* already has
 an edge into from this screen is recorded as untried with reason `known-target` and never pressed.
