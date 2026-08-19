@@ -127,6 +127,7 @@ class PlaywrightSession implements RendererSession {
   readonly viewport: { width: number; height: number };
   readonly deviceScaleFactor: number;
   private historyRefusals = 0;
+  private historyAnswered = false;
   /** §7.10 — when the screen now on show began arriving. */
   private screenStartedAt = Date.now();
 
@@ -167,15 +168,20 @@ class PlaywrightSession implements RendererSession {
    *
    * An app with no client router answers that way every time, and each attempt
    * costs a settle for nothing. Two refusals in a row is enough: stop asking.
+   *
+   * Only of an app that has never answered. Once one move has landed the router is
+   * there, and a refusal after that is about the screen in front of it — a crash
+   * boundary, a screen still arriving — so the rest of the run keeps its in-app moves.
    */
   private async moveByHistory(url: string): Promise<boolean> {
-    if (this.historyRefusals >= 2) return false;
+    if (!worthProbingHistory(this.historyAnswered, this.historyRefusals)) return false;
     if (!this.page.url().startsWith(new URL(this.options.baseUrl).origin)) return false;
     const before = await this.fingerprint();
     const moved = await this.page.evaluate<boolean>(historyGoto(url)).catch(() => false);
     if (moved) {
       await this.settle();
       if ((await this.fingerprint()) !== before) {
+        this.historyAnswered = true;
         this.historyRefusals = 0;
         return true;
       }
@@ -280,6 +286,11 @@ class PlaywrightSession implements RendererSession {
  * listens to, and dispatching it is the only way to announce a `pushState` the
  * router did not make itself.
  */
+/** §7.4 — two tries to prove a router, then unlimited once it has proved one. */
+export function worthProbingHistory(answered: boolean, refusals: number): boolean {
+  return answered || refusals < 2;
+}
+
 function historyGoto(url: string): string {
   return `(() => {
   const target = new URL(${JSON.stringify(url)}, location.href);

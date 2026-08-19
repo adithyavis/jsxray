@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { navigate, type Navigable } from '../src/renderer/playwright/index.js';
+import {
+  navigate,
+  worthProbingHistory,
+  type Navigable,
+} from '../src/renderer/playwright/index.js';
 
 /** Records what a navigation asked of the page, and can fail on cue. */
 function fakePage(failures: unknown[]): Navigable & { gotos: string[]; waits: string[] } {
@@ -52,5 +56,20 @@ describe('navigate', () => {
       'ERR_CONNECTION_REFUSED',
     );
     expect(page.gotos).toHaveLength(1);
+  });
+});
+
+describe('worthProbingHistory', () => {
+  it('gives an app that has never answered two tries', () => {
+    expect(worthProbingHistory(false, 0)).toBe(true);
+    expect(worthProbingHistory(false, 1)).toBe(true);
+    expect(worthProbingHistory(false, 2)).toBe(false);
+  });
+
+  it('keeps asking an app that has answered once, however it refuses after', () => {
+    // A crash boundary refuses every move on the screen it replaced. Reading that as
+    // "no router" would cost every later route a reload.
+    expect(worthProbingHistory(true, 2)).toBe(true);
+    expect(worthProbingHistory(true, 9)).toBe(true);
   });
 });
