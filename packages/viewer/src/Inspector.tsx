@@ -1,7 +1,8 @@
-import type { ReactElement } from 'react';
+import { useState, type ReactElement } from 'react';
 import type { Edge, JsxrayDocument, ScreenState } from '@jsxray/core';
 import type { ScreenNodeData } from './graph.js';
 import { screenOf, titleOf } from './document.js';
+import { Lightbox } from './Lightbox.js';
 
 interface InspectorProps {
   document: JsxrayDocument;
@@ -21,6 +22,7 @@ const NO_CAPTURE: Record<string, string> = {
 export function Inspector({ document, node, onSelect, onClose }: InspectorProps): ReactElement {
   const state = node.state;
   const screen = screenOf(document, state);
+  const [zoomed, setZoomed] = useState(false);
 
   // This is one persona's state, so only that persona's traversals belong here.
   const outgoing = document.edges.filter(
@@ -48,12 +50,17 @@ export function Inspector({ document, node, onSelect, onClose }: InspectorProps)
 
       <div className="panel-body">
         {state.capture ? (
-          <a className="shot" href={state.capture.path} target="_blank" rel="noreferrer">
+          <button
+            type="button"
+            className="shot"
+            onClick={() => setZoomed(true)}
+            title="See this capture big"
+          >
             <img src={state.capture.path} alt={`Capture of ${titleOf(state.signature)}`} />
             <span className="shot-foot">
-              {state.capture.viewport.width}×{state.capture.viewport.height} · open full size
+              {state.capture.viewport.width}×{state.capture.viewport.height} · see it big
             </span>
-          </a>
+          </button>
         ) : (
           <div className="shot shot-none">
             <span className="shot-chip">{baseName(screen?.file) ?? 'no capture'}</span>
@@ -196,6 +203,15 @@ export function Inspector({ document, node, onSelect, onClose }: InspectorProps)
           <p className="muted">Arrives with the v2 component graph — this stage has not run.</p>
         </section>
       </div>
+
+      {zoomed && state.capture ? (
+        <Lightbox
+          title={titleOf(state.signature)}
+          route={state.route}
+          capture={state.capture}
+          onClose={() => setZoomed(false)}
+        />
+      ) : null}
     </div>
   );
 }
