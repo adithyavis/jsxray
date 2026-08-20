@@ -66,7 +66,7 @@ function Shell({ children }: { children: React.ReactNode }): ReactElement {
       <header className="topbar">
         <div className="brand">jsxray</div>
       </header>
-      <div className="body">
+      <div className="body-no-columns">
         <main className="canvas">{children}</main>
       </div>
     </div>

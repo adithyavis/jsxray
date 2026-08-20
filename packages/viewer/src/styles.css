@@ -69,6 +69,12 @@ kbd {
   grid-template-rows: minmax(0, 1fr);
 }
 
+.body-no-columns {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+}
+
 /* No screen selected, no third column. */
 .body-bare {
   grid-template-columns: var(--sidebar) minmax(0, 1fr);
