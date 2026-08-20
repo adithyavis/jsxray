@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { JsxrayDocument, ScreenState } from '@jsxray/core';
 import type { Edge } from '@jsxray/core';
 import type { Node } from '@xyflow/react';
-import { eyebrowOf, titleOf, transitionOf } from '../src/document.js';
+import { eyebrowOf, titleOf } from '../src/document.js';
 import { FRAME_SIZE, buildGraph, findHiddenLinks, nodeId, type GraphLane } from '../src/graph.js';
 import { layoutGraph, layoutLanes } from '../src/layout.js';
 
@@ -164,8 +164,8 @@ describe('graph', () => {
     expect(screenNodes(graph).map((node) => node.id).sort()).toEqual(
       ['user::/settings', 'user::/settings/billing'].sort(),
     );
-    expect(graph.edges.map((edge) => [edge.id, edge.label])).toEqual([
-      ['user::/settings->/settings/billing', 'Navigate to /settings/billing'],
+    expect(graph.edges.map((edge) => edge.id)).toEqual([
+      'user::/settings->/settings/billing',
     ]);
   });
 
@@ -229,28 +229,6 @@ describe('graph', () => {
     expect(new Set(screenNodes(graph).map((node) => node.height))).toEqual(
       new Set([FRAME_SIZE.phone.height]),
     );
-  });
-});
-
-describe('edge anatomy', () => {
-  it('names an edge by the transition, not by the words on the control', () => {
-    const { edges } = buildGraph({ document, personaId: 'user', frame: 'browser' });
-    expect(edges.map((edge) => edge.label)).toEqual(['Navigate to /settings']);
-  });
-
-  it('falls back to the control, shortened, when nothing structural changed', () => {
-    const from = state('/feed', 'user', true);
-    const to = { ...state('/feed', 'user', true), fingerprint: 'def' };
-    expect(transitionOf(from, to, edge('View this user’s verifications'))).toBe(
-      'View this user’s verifications',
-    );
-    expect(transitionOf(from, to, edge('a'.repeat(60)))).toBe(`${'a'.repeat(39)}…`);
-  });
-
-  it('names a closed overlay too', () => {
-    const open = state('/settings$rename-workspace', 'user', true, '/settings');
-    const shut = state('/settings', 'user', true);
-    expect(transitionOf(open, shut, edge('Cancel'))).toBe('Close the rename workspace dialog');
   });
 });
 

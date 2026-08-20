@@ -1238,25 +1238,21 @@ because a runtime edge that matches no declared link is a finding and not a shor
 they have no capture and do not belong on the flow canvas. They are reachable from `--list` and
 from a separate listing in the viewer, not as nodes (product §11.2).
 
-**Edges** — runtime only (§5); curved, single-arrowed, and **named for the transition rather than
-for the words on the control**. One edge per pair even when several interactions share it, so the
-line is named once:
+**Edges** — runtime only (§5); curved, single-arrowed, and **unlabelled**. One edge per pair even
+when several interactions share it.
 
-| Transition | Label |
-|---|---|
-| the screen id changed | `Navigate to /profile/:name/feed/:rkey` — the destination's canonical route (§3) |
-| an overlay appeared | `Open the rename workspace dialog` — the overlay's own name, de-slugged, with its role as the noun (§3.1) |
-| an overlay went away | `Close the rename workspace dialog` |
-| a form submitted, nothing structural changed | `Submit <control>` |
-| anything else | the control's label, capped at 40 characters |
+A line was labelled once, and the labels were removed. Nothing that could be written on a line was
+worth the cost of writing it there. An accessible name is written to be read *in place*, next to
+the thing it acts on: "View this user's verifications" is a good button and, drawn on a line,
+longer than the node it points at and a statement of where the reader already is. Naming the line
+for its **destination** instead — `Navigate to /profile/:name/feed/:rkey` — says something true,
+but the destination is the node the line already points at, so the canvas ends up saying it twice
+and pays for the second time in clutter: on Bluesky a screen with nine ways out drew nine captions
+across the screens around it.
 
-An accessible name is written to be read *in place*, next to the thing it acts on: "View this
-user's verifications" is a good button and a bad edge label. Drawn on a line it is longer than the
-node it points at, and it says where the reader already is rather than where the line goes. The
-route says where the line goes, and it is the same string the node, the inspector, and `--list`
-use for that screen. The control's own words are a fact and are not lost — they stay on
-`edge.label` in the document, in the inspector's transition list, and in `--list`. Only the line
-is renamed, which is the same split as eyebrow, title, and caption above.
+So the line carries direction and nothing else, and every word about a traversal lives where there
+is room to read it: `edge.label` keeps the control's own words in the document, the inspector lists
+them against each destination, and `--list` prints them.
 
 **The roots are `config.seedRoutes`, and nothing else.** The breadth-first search that thins the
 lines starts there, because that is where the reader enters the app and where the run entered it.

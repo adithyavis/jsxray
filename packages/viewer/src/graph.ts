@@ -1,6 +1,6 @@
 import type { JsxrayDocument, ScreenState } from '@jsxray/core';
 import type { Edge, Node } from '@xyflow/react';
-import { eyebrowOf, screenOf, sectionOf, titleOf, transitionOf } from './document.js';
+import { eyebrowOf, screenOf, sectionOf, titleOf } from './document.js';
 
 export type FrameKind = 'browser' | 'phone';
 
@@ -141,7 +141,7 @@ function buildLane(
 
   const inbound = new Map<string, number>();
   const outbound = new Map<string, number>();
-  const captionByPair = new Map<string, string>();
+  const seen = new Set<string>();
   const order: string[] = [];
 
   for (const edge of runtimeEdges) {
@@ -156,11 +156,9 @@ function buildLane(
       outbound.set(from, (outbound.get(from) ?? 0) + 1);
       inbound.set(to, (inbound.get(to) ?? 0) + 1);
     }
-    if (captionByPair.has(pair)) continue;
+    if (seen.has(pair)) continue;
+    seen.add(pair);
     order.push(pair);
-    // One line per pair, so it is named once — by the transition, not by every
-    // control that makes it (§14).
-    captionByPair.set(pair, transitionOf(bySignature.get(from)!, bySignature.get(to)!, edge));
   }
 
   const hidden = findHiddenLinks(order, seedsOf(document, bySignature));
@@ -173,7 +171,6 @@ function buildLane(
       id: `${personaId}::${pair}`,
       source: nodeId(personaId, source),
       target: nodeId(personaId, target),
-      label: captionByPair.get(pair)!,
       type: 'default',
       animated: false,
       markerEnd: {
@@ -186,10 +183,6 @@ function buildLane(
         strokeWidth: 1,
       } as Edge['markerEnd'],
       style: { stroke: '#7d8698', strokeWidth: 1.5 },
-      labelStyle: { fill: '#c8cfdb', fontSize: 11 },
-      labelBgStyle: { fill: '#161a22' },
-      labelBgPadding: [6, 3] as [number, number],
-      labelBgBorderRadius: 3,
     });
   }
 
