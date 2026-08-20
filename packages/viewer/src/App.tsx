@@ -479,6 +479,11 @@ function Workbench({ document }: { document: JsxrayDocument }): ReactElement {
             >
               <ZoomBar />
             </ReactFlow>
+          ) : graph.lanes.length ? (
+            // The layout is async, so `nodes` is empty until elk answers. Without
+            // this the empty-crawl notice flashes on load and says the run found
+            // nothing, which is a different claim.
+            <Spinner />
           ) : (
             <Notice tone="wait" title={crawled ? 'No states on the canvas' : 'The crawl has not run'}>
               {crawled
