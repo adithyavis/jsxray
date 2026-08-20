@@ -306,7 +306,7 @@ function Workbench({ document }: { document: JsxrayDocument }): ReactElement {
         />
 
         <span className="topbar-spacer" />
-        <Coverage document={document} hiddenLinks={graph.hiddenLinks} />
+        {/* <Coverage document={document} hiddenLinks={graph.hiddenLinks} /> */}
       </header>
 
       <div className="body">
