@@ -1183,8 +1183,46 @@ longer identifies a node. No edge ever crosses lanes, so each lane is laid out o
 otherwise one persona's screens pull another's into a shared row, which reads as a relationship
 that is not there. A single lane gets no header; the control already names it.
 
-**Chrome** — dark ground; a dot grid whose spacing is fixed in screen space, so it does not
-scale with zoom; a vertical brand rail; square zoom controls bottom-left.
+**Chrome** — a top bar over three columns: a flow list, the canvas, the inspector. Dark ground;
+a dot grid whose spacing is fixed in screen space, so it does not scale with zoom; a zoom bar
+bottom-left carrying the zoom as a number and a **Fit**.
+
+The top bar holds the brand, the persona control, and the frame control — both **segmented
+controls, not menus**, because each has a handful of values that are all worth seeing at once and
+the reader is switching between them rather than picking once. Coverage sits at the far end.
+
+**Flows.** A flow is the part of the app a screen belongs to: its first `meta.groups` entry,
+falling back to the nearest **non-parameter** parent segment, which is the same answer the node
+eyebrow gives — the sidebar and the canvas must not name the same screen two ways. A parameter is
+not a part of an app, so `/profile/:name/post/:rkey` is under `post`; a screen at the root of the
+app has no parent and is under **Top level**. Flows are ordered by where the crawl met them, and
+counted by nodes drawn, so the count is always the number of screens the canvas is showing.
+
+Opening a flow narrows the canvas to it and fits the view to those nodes. **A flow's screens are
+also listed by name under it**, because a flow's screens are scattered across the tree by
+construction and fitting to them often lands below the zoom where names are readable. Picking one
+by name arrives close enough to read.
+
+**Finding a screen.** A filter box heads the sidebar (`/` or `⌘K` to focus it, `Enter` for the
+next hit, `Shift+Enter` for the previous), matching a node's title, flow, route, and signature. It
+narrows the canvas and re-counts every flow at once. Filtering inside an open flow narrows within
+it; a filter that empties that flow falls back to the whole canvas, because dimming every node at
+once reads as a fault rather than as an answer. `Esc` clears the selection; `f` fits the map.
+
+**One thing at a time.** Selecting a node lights that node, the nodes one hop from it, and the
+lines between them, and drops everything else back — the question a selected screen asks is what
+reaches it and what it reaches. A narrowed canvas is the reader's own question and outranks that
+ring, so while a flow or a filter is live it decides what is lit and a selection only marks its
+node. Selecting also brings the node to the middle of the canvas, because its neighbours are the
+point.
+
+**Words that cannot be read are not drawn.** Below **0.45** zoom a node's title, eyebrow, and
+caption and every edge label are hidden: at that size they are smaller than the dot grid and read
+as noise over the capture. The frames and the captures stay, which is what the far view is for.
+
+**Coverage is a proportion, so it is drawn as one.** Screens reached and edges confirmed each get
+their two numbers and a bar; links not drawn and unmatchable traversals get their own tallies,
+because a runtime edge that matches no declared link is a finding and not a shortfall.
 
 **Non-page screens** — route handlers and error states render no UI and are never crawled, so
 they have no capture and do not belong on the flow canvas. They are reachable from `--list` and
@@ -1275,11 +1313,23 @@ confirmed BFS traversals: the graph is near-tree by construction. A graph with e
 drawn — including the ones a nav bar produces out of every screen — is dense enough that no layout
 engine could oblige.
 
-**Inspector** — in v1: route facts, the steps that reached the state, outgoing confirmed
-transitions **for that state's own persona**, and which personas reached the same screen. The
-selected node belongs to one lane, so listing every persona's transitions out of it would put back
-the merge the canvas just took out. The component tree, props, and design-system origin
-(product §7.1, rows 2–3) arrive with the v2 component graph.
+**Inspector** — a fixed third column, so opening one never reflows the canvas. In v1, in this
+order: the capture (or, where there is none, a hatched panel naming the file and saying which of
+§7.8's reasons applies); the in and out degree as two cards; **outgoing confirmed transitions for
+that state's own persona**, each named for where it goes and each a way to go there; route
+parameters; one caveat; then route facts, overlays, the steps that reached the state, and dead
+actions. The selected node belongs to one lane, so listing every persona's transitions out of it
+would put back the merge the canvas just took out.
+
+**One caveat, not a list of them.** A screen carries at most one warning, most load-bearing first:
+a screen that only some personas reached is gated, and where those personas agree on
+`authenticated` it is named *Signed-in only* or *Signed-out only*; otherwise, actions the crawl saw
+and never used (§7.5) say how completely the screen was read. A screen with nothing to warn about
+shows nothing.
+
+The component tree, props, and design-system origin (product §7.1, rows 2–3) arrive with the v2
+component graph; until `components[].props` is populated the inspector shows the route's own
+parameters in that slot rather than an empty section.
 
 **Typing note.** React Flow node data must be indexable. Keep the fields in their own interface and
 intersect with `Record<string, unknown>`: `keyof` an index-signature type is `string | number`, so
