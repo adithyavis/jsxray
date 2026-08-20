@@ -1274,8 +1274,14 @@ screen already passed through, self-loops — is not drawn.
 
 This is a **presentation** rule, not an analysis one. Every traversal stays in `edges`, the
 inspector lists all confirmed transitions out of a state, and the node caption keeps the true in
-and out counts. Only the lines are thinned, and the toolbar reports how many were omitted, so a
-simplified picture never reads as a complete one (product §7.2).
+and out counts. Only the lines are thinned, so a simplified picture never reads as a complete one
+(product §7.2).
+
+**Every screen says how many of its own links became lines.** A true count of 14 beside five drawn
+lines reads as a contradiction until the screen says which five. The degree cards carry the count
+and the split under it — *5 drawn, 9 not* — and the node caption's hint says the same on hover.
+Per screen, not per graph: a toolbar total tells the reader that lines are missing somewhere, and
+never that these nine are missing here.
 
 Ties between equally short paths break on crawl order, which is why discovery order is
 load-bearing here and not only in `considerModelOrder`. The result is a spanning tree by
@@ -1321,11 +1327,11 @@ engine could oblige.
 
 **Inspector** — a fixed third column, so opening one never reflows the canvas. In v1, in this
 order: the capture (or, where there is none, a hatched panel naming the file and saying which of
-§7.8's reasons applies); the in and out degree as two cards; **outgoing confirmed transitions for
-that state's own persona**, each named for where it goes and each a way to go there; route
-parameters; one caveat; then route facts, overlays, the steps that reached the state, and dead
-actions. The selected node belongs to one lane, so listing every persona's transitions out of it
-would put back the merge the canvas just took out.
+§7.8's reasons applies); the in and out degree as two cards, each naming how many of its links the
+canvas drew; **outgoing confirmed transitions for that state's own persona**, each named for where
+it goes and each a way to go there; route parameters; one caveat; then route facts, overlays, the
+steps that reached the state, and dead actions. The selected node belongs to one lane, so listing
+every persona's transitions out of it would put back the merge the canvas just took out.
 
 **One caveat, not a list of them.** A screen carries at most one warning, most load-bearing first:
 a screen that only some personas reached is gated, and where those personas agree on
