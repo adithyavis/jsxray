@@ -502,6 +502,50 @@ kbd {
   word-break: break-word;
 }
 
+.spinner {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.spinner svg {
+  animation: spin 900ms linear infinite;
+}
+
+.spinner circle {
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.spinner-track {
+  stroke: var(--line);
+}
+
+.spinner-arc {
+  stroke: var(--brand);
+  /* r=13, so the circumference is ~81.7: a quarter drawn, the rest gap. */
+  stroke-dasharray: 20 62;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* lanes — one per persona */
 .lane {
   display: flex;

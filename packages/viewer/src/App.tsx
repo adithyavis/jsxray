@@ -50,9 +50,7 @@ export function App(): ReactElement {
   if (!document) {
     return (
       <Shell>
-        <Notice tone="wait" title="Reading jsxray.json…">
-          The map appears as soon as the run is loaded.
-        </Notice>
+        <Spinner />
       </Shell>
     );
   }
@@ -683,6 +681,22 @@ function Stat({
         <i style={{ width: `${Math.round(share * 100)}%` }} />
       </span>
     </span>
+  );
+}
+
+/**
+ * The faint ring is the whole shape; the bright arc is the part that turns. Under
+ * `prefers-reduced-motion` the arc stops and the ring still reads as deliberate.
+ */
+function Spinner(): ReactElement {
+  return (
+    <div className="spinner" role="status">
+      <svg viewBox="0 0 32 32" width="30" height="30" aria-hidden focusable="false">
+        <circle className="spinner-track" cx="16" cy="16" r="13" />
+        <circle className="spinner-arc" cx="16" cy="16" r="13" />
+      </svg>
+      <span className="sr-only">Reading the run</span>
+    </div>
   );
 }
 
