@@ -298,8 +298,8 @@ function Workbench({ document }: { document: JsxrayDocument }): ReactElement {
     // has a say while nothing is selected.
     if (focus) {
       return edges.map((edge) => {
-        if (focus.trailEdges.has(edge.id)) return lit(edge, true);
-        if (focus.edgeIds.has(edge.id)) return lit(edge, false);
+        if (focus.trailEdges.has(edge.id)) return lit(edge, 'in');
+        if (focus.edgeIds.has(edge.id)) return lit(edge, 'on');
         return { ...edge, className: 'is-dim' };
       });
     }
@@ -586,21 +586,28 @@ function ZoomBar(): ReactElement {
 }
 
 /**
- * The line's own colour is set on the edge, not in the stylesheet, because the
- * arrowhead is a marker rather than part of the path and takes its colour from
- * the same place. `animated` is React Flow's marching dashes, which run from
- * source to target — along the way in, which is the direction being explained.
+ * How the reader got here and where they can go next are two different answers,
+ * so they are two different colours. Both march their dashes source-to-target,
+ * which is the direction the crawl travelled in either case.
+ *
+ * The colour is set on the edge rather than in the stylesheet because the
+ * arrowhead is a marker, not part of the path, and takes its colour from the
+ * same place. These two must match `--way-in` and `--way-on`.
  */
-const LIT = '#5b9dfc';
+const LIT: Record<'in' | 'on', string> = { in: '#5b9dfc', on: '#3fbf9a' };
 
-function lit(edge: Edge, trail: boolean): Edge {
+function lit(edge: Edge, way: 'in' | 'on'): Edge {
+  const colour = LIT[way];
   return {
     ...edge,
-    animated: trail,
-    className: trail ? 'is-trail' : 'is-focus',
-    zIndex: trail ? 2 : 1,
-    style: { ...edge.style, stroke: LIT, strokeWidth: 2 },
-    markerEnd: { ...(edge.markerEnd as Record<string, unknown>), color: LIT } as Edge['markerEnd'],
+    animated: true,
+    className: `is-lit is-way-${way}`,
+    zIndex: way === 'in' ? 2 : 1,
+    style: { ...edge.style, stroke: colour, strokeWidth: 2 },
+    markerEnd: {
+      ...(edge.markerEnd as Record<string, unknown>),
+      color: colour,
+    } as Edge['markerEnd'],
   };
 }
 

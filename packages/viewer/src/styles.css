@@ -9,6 +9,9 @@
   --ink-faint: #616161;
   --brand: #5b9dfc;
   --brand-soft: rgba(91, 157, 252, 0.13);
+  /* how the reader got here, and where they can go next — see LIT in App.tsx */
+  --way-in: #5b9dfc;
+  --way-on: #3fbf9a;
   --on: #e9e9e6;
   --warn: #d9a441;
   --warn-soft: rgba(217, 164, 65, 0.09);
@@ -655,15 +658,20 @@ kbd {
   opacity: 0.14;
 }
 
-.react-flow__node.is-match .frame,
-.react-flow__node.is-near .frame {
+.react-flow__node.is-match .frame {
   border-color: var(--brand);
 }
 
 /* the screens the reader passed through to get here */
 .react-flow__node.is-trail .frame {
-  border-color: var(--brand);
+  border-color: var(--way-in);
   box-shadow: 0 0 0 1px rgba(91, 157, 252, 0.35);
+}
+
+/* the screens this one leads to */
+.react-flow__node.is-near .frame {
+  border-color: var(--way-on);
+  box-shadow: 0 0 0 1px rgba(63, 191, 154, 0.28);
 }
 
 .react-flow__node.is-selected .frame {
@@ -671,15 +679,14 @@ kbd {
   box-shadow: 0 0 0 1px var(--brand), 0 8px 24px rgba(91, 157, 252, 0.18);
 }
 
-.react-flow__edge.is-focus .react-flow__edge-path,
-.react-flow__edge.is-trail .react-flow__edge-path {
-  stroke: var(--brand);
+.react-flow__edge.is-lit .react-flow__edge-path {
   stroke-width: 2;
 }
 
 /* React Flow's `animated` marches the dashes source-to-target, which is the
-   way in. Its own rule sets a 5px dash; a longer one reads at canvas zooms. */
-.react-flow__edge.is-trail.animated .react-flow__edge-path {
+   direction the crawl went. Its own rule sets a 5px dash; a longer one reads
+   at the zooms a canvas of fifty screens is actually looked at. */
+.react-flow__edge.is-lit.animated .react-flow__edge-path {
   stroke-dasharray: 8 6;
 }
 

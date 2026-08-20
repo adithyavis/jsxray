@@ -1210,10 +1210,16 @@ it; a filter that empties that flow falls back to the whole canvas, because dimm
 once reads as a fault rather than as an answer. `Esc` clears the selection; `f` fits the map.
 
 **One thing at a time.** Selecting a screen lights the whole way in to it: the trail of screens
-back to the seed that reached it, with dashes marching along those lines in the direction the
-crawl travelled, and the screens one step on. Everything else drops back. One line in per screen
-makes the drawn lines a spanning tree, so that way in is unique — there is no choice to make about
-which path to show, and the trail is the same answer the inspector's *Reached by* gives in words.
+back to the seed that reached it, and the screens one step on. Everything else drops back. One
+line in per screen makes the drawn lines a spanning tree, so that way in is unique — there is no
+choice to make about which path to show, and the trail is the same answer the inspector's
+*Reached by* gives in words.
+
+**The way in and the way on are two answers, so they are two colours** — the trail blue, the lines
+out green, and each lit screen bordered to match the line that reaches it. Dashes march along both
+from source to target, which is the direction the crawl travelled in either case. The colour is
+set on the line rather than in the stylesheet, because the arrowhead is a marker and has to be
+told the same thing.
 
 The trail is what a selection is asking about, so it stays lit through an open flow or a live
 filter. Those narrow which **screens** the canvas is showing, and while nothing is selected they
