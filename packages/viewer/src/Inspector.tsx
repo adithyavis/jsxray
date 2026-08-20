@@ -65,14 +65,8 @@ export function Inspector({ document, node, onSelect, onClose }: InspectorProps)
         )}
 
         <div className="cards">
-          <div className="card">
-            <span className="card-label">Inbound</span>
-            <span className="card-value">{node.inbound}</span>
-          </div>
-          <div className="card">
-            <span className="card-label">Outbound</span>
-            <span className="card-value">{node.outbound}</span>
-          </div>
+          <DegreeCard label="Inbound" total={node.inbound} drawn={node.inboundDrawn} />
+          <DegreeCard label="Outbound" total={node.outbound} drawn={node.outboundDrawn} />
         </div>
 
         <section>
@@ -268,6 +262,35 @@ function Caveat({
 function linkName(document: JsxrayDocument, edge: Edge): string {
   const target = document.states.find((state) => state.signature === edge.toState);
   return target ? titleOf(target.signature) : (edge.toState ?? edge.to ?? edge.kind);
+}
+
+/**
+ * §14 — the caption keeps the true count, and the canvas draws a tree. Saying
+ * how many of them became lines is what stops the two from reading as a
+ * contradiction.
+ */
+function DegreeCard({
+  label,
+  total,
+  drawn,
+}: {
+  label: string;
+  total: number;
+  drawn: number;
+}): ReactElement {
+  return (
+    <div className="card">
+      <span className="card-label">{label}</span>
+      <span className="card-value">{total}</span>
+      <span className="card-note">
+        {total === 0
+          ? 'none'
+          : drawn === total
+            ? 'all drawn'
+            : `${drawn} drawn, ${total - drawn} not`}
+      </span>
+    </div>
+  );
 }
 
 function baseName(file: string | null | undefined): string | null {

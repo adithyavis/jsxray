@@ -40,11 +40,11 @@ export function ScreenNode({ data, selected }: NodeProps): ReactElement {
 
       <div className="node-title">{node.title}</div>
       <div className="node-caption">
-        <span className="degree" title={`${node.inbound} confirmed transitions in`}>
+        <span className="degree" title={degreeHint(node.inbound, node.inboundDrawn, 'in')}>
           <Arrow direction="in" />
           {node.inbound}
         </span>
-        <span className="degree" title={`${node.outbound} confirmed transitions out`}>
+        <span className="degree" title={degreeHint(node.outbound, node.outboundDrawn, 'out')}>
           <Arrow direction="out" />
           {node.outbound}
         </span>
@@ -57,6 +57,12 @@ export function ScreenNode({ data, selected }: NodeProps): ReactElement {
       <Handle type="source" position={Position.Right} />
     </div>
   );
+}
+
+/** The caption keeps the true count (§14), so the hint says how many are lines. */
+function degreeHint(total: number, drawn: number, direction: 'in' | 'out'): string {
+  const head = `${total} confirmed transitions ${direction}`;
+  return drawn === total ? head : `${head} — ${drawn} drawn, ${total - drawn} not`;
 }
 
 function Arrow({ direction }: { direction: 'in' | 'out' }): ReactElement {

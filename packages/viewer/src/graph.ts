@@ -21,6 +21,9 @@ export interface ScreenNodeFields {
   state: ScreenState;
   inbound: number;
   outbound: number;
+  /** Of those, the ones the canvas draws — the rest are thinned by §14. */
+  inboundDrawn: number;
+  outboundDrawn: number;
 }
 
 export interface LaneNodeFields {
@@ -163,10 +166,14 @@ function buildLane(
 
   const hidden = findHiddenLinks(order, seedsOf(document, bySignature));
   const edges: Edge[] = [];
+  const inboundDrawn = new Map<string, number>();
+  const outboundDrawn = new Map<string, number>();
 
   for (const pair of order) {
     if (hidden.has(pair)) continue;
     const [source, target] = splitPair(pair);
+    outboundDrawn.set(source, (outboundDrawn.get(source) ?? 0) + 1);
+    inboundDrawn.set(target, (inboundDrawn.get(target) ?? 0) + 1);
     edges.push({
       id: `${personaId}::${pair}`,
       source: nodeId(personaId, source),
@@ -199,6 +206,8 @@ function buildLane(
       state,
       inbound: inbound.get(signature) ?? 0,
       outbound: outbound.get(signature) ?? 0,
+      inboundDrawn: inboundDrawn.get(signature) ?? 0,
+      outboundDrawn: outboundDrawn.get(signature) ?? 0,
     };
     return {
       id: nodeId(personaId, signature),

@@ -932,6 +932,14 @@ kbd {
   font-variant-numeric: tabular-nums;
 }
 
+.card-note {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .panel h3 {
   margin: 26px 0 9px;
   font-size: 11px;
