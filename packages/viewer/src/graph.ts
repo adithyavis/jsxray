@@ -1,6 +1,6 @@
 import type { JsxrayDocument, ScreenState } from '@jsxray/core';
 import type { Edge, Node } from '@xyflow/react';
-import { eyebrowOf, screenOf, titleOf, transitionOf } from './document.js';
+import { eyebrowOf, screenOf, sectionOf, titleOf, transitionOf } from './document.js';
 
 export type FrameKind = 'browser' | 'phone';
 
@@ -15,6 +15,8 @@ export interface ScreenNodeFields {
   personaId: string;
   title: string;
   eyebrow: string | null;
+  /** The eyebrow before it is shouted — what the flow list calls this screen. */
+  section: string | null;
   frame: FrameKind;
   state: ScreenState;
   inbound: number;
@@ -179,6 +181,7 @@ function buildLane(
       personaId,
       title: titleOf(signature),
       eyebrow: eyebrowOf(screen, state.route),
+      section: sectionOf(screen, state.route),
       frame,
       state,
       inbound: inbound.get(signature) ?? 0,
