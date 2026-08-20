@@ -61,6 +61,14 @@ kbd {
   min-height: 0;
   display: grid;
   grid-template-columns: var(--sidebar) minmax(0, 1fr) var(--inspector);
+  /* A grid item is `min-height: auto`, so without this the inspector grows to
+     its content and its own overflow never has a height to scroll inside. */
+  grid-template-rows: minmax(0, 1fr);
+}
+
+/* No screen selected, no third column. */
+.body-bare {
+  grid-template-columns: var(--sidebar) minmax(0, 1fr);
 }
 
 /* ---------- top bar ---------- */
@@ -200,6 +208,7 @@ kbd {
 /* ---------- sidebar ---------- */
 
 .sidebar {
+  min-height: 0;
   background: var(--panel);
   border-right: 1px solid var(--line);
   padding: 16px 12px 24px;
@@ -390,6 +399,7 @@ kbd {
 .canvas {
   position: relative;
   min-width: 0;
+  min-height: 0;
   background-color: var(--ground);
   background-image: radial-gradient(var(--dot) 1px, transparent 1px);
   background-size: 24px 24px;
@@ -678,12 +688,10 @@ kbd {
   background: var(--panel);
   border-left: 1px solid var(--line);
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-}
-
-.inspector-empty {
-  padding: 22px 20px;
 }
 
 .eyebrow {

@@ -281,6 +281,8 @@ function Workbench({ document }: { document: JsxrayDocument }): ReactElement {
   }, [edges, scope, focus]);
 
   const personas = personaOptions(document);
+  // Nothing selected is nothing to inspect, so the column is not there at all.
+  const inspecting = showNonPages || Boolean(selected);
 
   return (
     <div className="app">
@@ -309,7 +311,7 @@ function Workbench({ document }: { document: JsxrayDocument }): ReactElement {
         {/* <Coverage document={document} hiddenLinks={graph.hiddenLinks} /> */}
       </header>
 
-      <div className="body">
+      <div className={`body${inspecting ? '' : ' body-bare'}`}>
         <nav className="sidebar" aria-label="Screens">
           <div className="filter">
             <SearchIcon />
@@ -455,26 +457,20 @@ function Workbench({ document }: { document: JsxrayDocument }): ReactElement {
           )}
         </main>
 
-        <aside className="inspector">
-          {showNonPages ? (
-            <NonPageList screens={nonPages} onClose={() => setShowNonPages(false)} />
-          ) : selected ? (
-            <Inspector
-              document={document}
-              node={selected.data}
-              onSelect={selectSignature}
-              onClose={() => setSelected(null)}
-            />
-          ) : (
-            <div className="inspector-empty">
-              <p className="eyebrow">Selected screen</p>
-              <p className="muted">
-                Pick a screen on the canvas to read its route, its links, and what the crawl could
-                not reach from it.
-              </p>
-            </div>
-          )}
-        </aside>
+        {inspecting ? (
+          <aside className="inspector">
+            {showNonPages ? (
+              <NonPageList screens={nonPages} onClose={() => setShowNonPages(false)} />
+            ) : (
+              <Inspector
+                document={document}
+                node={selected!.data}
+                onSelect={selectSignature}
+                onClose={() => setSelected(null)}
+              />
+            )}
+          </aside>
+        ) : null}
       </div>
     </div>
   );
