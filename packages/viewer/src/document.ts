@@ -21,13 +21,28 @@ export function screenOf(document: JsxrayDocument, state: ScreenState): Screen |
   return document.screens.find((screen) => screen.id === state.screenId) ?? null;
 }
 
+/**
+ * §14 — the part of the app a screen belongs to: its first route group, falling
+ * back to the parent path segment. The node eyebrow and the flow list are the
+ * same answer in two type cases, so they are the same function.
+ */
+export function sectionOf(screen: Screen | null, route: string): string | null {
+  const group = screen?.meta.groups[0];
+  if (group) return deSlug(group);
+  const segments = route.split('$')[0]!.split('/').filter(Boolean);
+  // A section is a part of the app, and a parameter is not one: the screens under
+  // `/profile/:name/post/:rkey` belong to `post`, never to `:name`.
+  for (let at = segments.length - 2; at >= 0; at -= 1) {
+    const segment = segments[at]!;
+    if (segment.startsWith(':') || segment.startsWith('*')) continue;
+    return deSlug(segment);
+  }
+  return null;
+}
+
 /** §14 — eyebrow, title, caption are presentation, computed here and nowhere else. */
 export function eyebrowOf(screen: Screen | null, route: string): string | null {
-  const group = screen?.meta.groups[0];
-  if (group) return group.toUpperCase();
-  const segments = route.split('$')[0]!.split('/').filter(Boolean);
-  if (segments.length < 2) return null;
-  return deSlug(segments[segments.length - 2]!).toUpperCase();
+  return sectionOf(screen, route)?.toUpperCase() ?? null;
 }
 
 /** An unnamed overlay falls back to a hash (§3.1), which is not a title. */

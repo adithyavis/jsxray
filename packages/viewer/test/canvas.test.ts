@@ -194,6 +194,9 @@ describe('node anatomy', () => {
     expect(eyebrowOf(settings, '/settings')).toBe('ACCOUNT');
     expect(eyebrowOf(null, '/dashboard/settings')).toBe('DASHBOARD');
     expect(eyebrowOf(null, '/')).toBeNull();
+    // A parameter is not a part of the app, so the section walks past it.
+    expect(eyebrowOf(null, '/profile/:name/post/:rkey')).toBe('POST');
+    expect(eyebrowOf(null, '/:name/:rkey')).toBeNull();
   });
 });
 
