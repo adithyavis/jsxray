@@ -660,14 +660,27 @@ kbd {
   border-color: var(--brand);
 }
 
+/* the screens the reader passed through to get here */
+.react-flow__node.is-trail .frame {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 1px rgba(91, 157, 252, 0.35);
+}
+
 .react-flow__node.is-selected .frame {
   border-color: var(--brand);
   box-shadow: 0 0 0 1px var(--brand), 0 8px 24px rgba(91, 157, 252, 0.18);
 }
 
-.react-flow__edge.is-focus .react-flow__edge-path {
+.react-flow__edge.is-focus .react-flow__edge-path,
+.react-flow__edge.is-trail .react-flow__edge-path {
   stroke: var(--brand);
   stroke-width: 2;
+}
+
+/* React Flow's `animated` marches the dashes source-to-target, which is the
+   way in. Its own rule sets a 5px dash; a longer one reads at canvas zooms. */
+.react-flow__edge.is-trail.animated .react-flow__edge-path {
+  stroke-dasharray: 8 6;
 }
 
 /* level of detail — the words go once they stop being readable */
@@ -1052,5 +1065,6 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;
+    animation: none !important;
   }
 }

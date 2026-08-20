@@ -1209,12 +1209,16 @@ narrows the canvas and re-counts every flow at once. Filtering inside an open fl
 it; a filter that empties that flow falls back to the whole canvas, because dimming every node at
 once reads as a fault rather than as an answer. `Esc` clears the selection; `f` fits the map.
 
-**One thing at a time.** Selecting a node lights that node, the nodes one hop from it, and the
-lines between them, and drops everything else back — the question a selected screen asks is what
-reaches it and what it reaches. A narrowed canvas is the reader's own question and outranks that
-ring, so while a flow or a filter is live it decides what is lit and a selection only marks its
-node. Selecting also brings the node to the middle of the canvas, because its neighbours are the
-point.
+**One thing at a time.** Selecting a screen lights the whole way in to it: the trail of screens
+back to the seed that reached it, with dashes marching along those lines in the direction the
+crawl travelled, and the screens one step on. Everything else drops back. One line in per screen
+makes the drawn lines a spanning tree, so that way in is unique — there is no choice to make about
+which path to show, and the trail is the same answer the inspector's *Reached by* gives in words.
+
+The trail is what a selection is asking about, so it stays lit through an open flow or a live
+filter. Those narrow which **screens** the canvas is showing, and while nothing is selected they
+decide the lines too; a selection takes the lines back. Selecting also brings the node to the
+middle of the canvas, because its neighbours are the point.
 
 **Words that cannot be read are not drawn.** Below **0.45** zoom a node's title, eyebrow, and
 caption and every edge label are hidden: at that size they are smaller than the dot grid and read

@@ -6,6 +6,7 @@ import {
   useNodesState,
   useReactFlow,
   useStore,
+  type Edge,
   type Node,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -146,18 +147,45 @@ function Workbench({ document }: { document: JsxrayDocument }): ReactElement {
     return new Set(ids);
   }, [flow, matches]);
 
-  /** The selected node, the nodes one hop from it, and the lines between. */
+  /**
+   * §14 — one line in per screen, so the drawn lines are a spanning tree and
+   * there is exactly one way from a seed to any node. That way in is the whole
+   * answer to "how does the reader get here", so the trail back to the root is
+   * lit, not only the screen one step before. The screens one step on are lit
+   * too, because they are where this one leads.
+   */
   const focus = useMemo(() => {
     if (!selected) return null;
-    const nodeIds = new Set<string>([selected.id]);
-    const edgeIds = new Set<string>();
+
+    const wayIn = new Map<string, Edge>();
+    const onward: Edge[] = [];
     for (const edge of graph.edges) {
-      if (edge.source !== selected.id && edge.target !== selected.id) continue;
+      if (!wayIn.has(edge.target)) wayIn.set(edge.target, edge);
+      if (edge.source === selected.id) onward.push(edge);
+    }
+
+    const trailNodes = new Set<string>();
+    const trailEdges = new Set<string>();
+    const seen = new Set<string>([selected.id]);
+    let at = selected.id;
+    for (;;) {
+      const edge = wayIn.get(at);
+      // A root has no line into it, and a graph that is not a tree could send
+      // the walk round in a circle.
+      if (!edge || seen.has(edge.source)) break;
+      seen.add(edge.source);
+      trailNodes.add(edge.source);
+      trailEdges.add(edge.id);
+      at = edge.source;
+    }
+
+    const nodeIds = new Set<string>([selected.id, ...trailNodes]);
+    const edgeIds = new Set<string>(trailEdges);
+    for (const edge of onward) {
       edgeIds.add(edge.id);
-      nodeIds.add(edge.source);
       nodeIds.add(edge.target);
     }
-    return { nodeIds, edgeIds };
+    return { nodeIds, edgeIds, trailNodes, trailEdges };
   }, [selected, graph.edges]);
 
   /**
@@ -254,10 +282,11 @@ function Workbench({ document }: { document: JsxrayDocument }): ReactElement {
       nodes.map((node) => {
         if (node.type !== 'screen') return node;
         const marks: string[] = [];
+        // The way in to the selected screen is the answer being given, so it
+        // stays lit even where the open flow would otherwise drop it back.
         if (node.id === selected?.id) marks.push('is-selected');
-        // A narrowed canvas is the reader's own question, so it outranks the
-        // ring a selection draws around one node.
-        if (scope) marks.push(scope.has(node.id) ? 'is-match' : 'is-dim');
+        else if (focus?.trailNodes.has(node.id)) marks.push('is-trail');
+        else if (scope) marks.push(scope.has(node.id) ? 'is-match' : 'is-dim');
         else if (focus) marks.push(focus.nodeIds.has(node.id) ? 'is-near' : 'is-dim');
         return marks.length ? { ...node, className: marks.join(' ') } : node;
       }),
@@ -265,6 +294,15 @@ function Workbench({ document }: { document: JsxrayDocument }): ReactElement {
   );
 
   const viewEdges = useMemo(() => {
+    // A selection is a question about lines, so it decides them; a flow only
+    // has a say while nothing is selected.
+    if (focus) {
+      return edges.map((edge) => {
+        if (focus.trailEdges.has(edge.id)) return lit(edge, true);
+        if (focus.edgeIds.has(edge.id)) return lit(edge, false);
+        return { ...edge, className: 'is-dim' };
+      });
+    }
     if (scope) {
       return edges.map((edge) =>
         scope.has(edge.source) && scope.has(edge.target)
@@ -272,12 +310,7 @@ function Workbench({ document }: { document: JsxrayDocument }): ReactElement {
           : { ...edge, className: 'is-dim' },
       );
     }
-    if (!focus) return edges;
-    return edges.map((edge) =>
-      focus.edgeIds.has(edge.id)
-        ? { ...edge, className: 'is-focus', zIndex: 1 }
-        : { ...edge, className: 'is-dim' },
-    );
+    return edges;
   }, [edges, scope, focus]);
 
   const personas = personaOptions(document);
@@ -550,6 +583,25 @@ function ZoomBar(): ReactElement {
       </button>
     </div>
   );
+}
+
+/**
+ * The line's own colour is set on the edge, not in the stylesheet, because the
+ * arrowhead is a marker rather than part of the path and takes its colour from
+ * the same place. `animated` is React Flow's marching dashes, which run from
+ * source to target — along the way in, which is the direction being explained.
+ */
+const LIT = '#5b9dfc';
+
+function lit(edge: Edge, trail: boolean): Edge {
+  return {
+    ...edge,
+    animated: trail,
+    className: trail ? 'is-trail' : 'is-focus',
+    zIndex: trail ? 2 : 1,
+    style: { ...edge.style, stroke: LIT, strokeWidth: 2 },
+    markerEnd: { ...(edge.markerEnd as Record<string, unknown>), color: LIT } as Edge['markerEnd'],
+  };
 }
 
 function haystack(node: Node): string {
