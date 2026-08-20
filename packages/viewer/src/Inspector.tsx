@@ -37,7 +37,6 @@ export function Inspector({ document, node, onSelect, onClose }: InspectorProps)
   return (
     <div className="panel">
       <header className="panel-head">
-        <p className="eyebrow">Selected screen</p>
         <div className="panel-title">
           <h2>{titleOf(state.signature)}</h2>
           <button type="button" className="icon-button" onClick={onClose} aria-label="Clear the selection">
