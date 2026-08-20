@@ -105,16 +105,93 @@ const screenNodes = (graph: ReturnType<typeof buildGraph>): Node[] =>
 describe('graph', () => {
   it('draws runtime edges only', () => {
     const { edges } = buildGraph({ document, personaId: 'user', frame: 'browser' });
-    expect(edges.map((edge) => edge.id)).toEqual([
-      'user::/->/settings',
-      'user::/settings->/settings$rename-workspace',
+    expect(edges.map((edge) => edge.id)).toEqual(['user::/->/settings']);
+  });
+
+  it('folds an overlay onto its screen, so a dialog is not a node', () => {
+    const graph = buildGraph({ document, personaId: 'user', frame: 'browser' });
+    expect(screenNodes(graph).map((node) => node.id).sort()).toEqual(
+      ['user::/', 'user::/settings'].sort(),
+    );
+  });
+
+  it('draws no line for opening a dialog, because it goes nowhere on the canvas', () => {
+    const graph = buildGraph({ document, personaId: 'user', frame: 'browser' });
+    const settings = screenNodes(graph).find((node) => node.id === 'user::/settings')!;
+    expect(graph.edges.some((edge) => edge.target === 'user::/settings$rename-workspace')).toBe(
+      false,
+    );
+    expect((settings.data as { outbound: number }).outbound).toBe(0);
+  });
+
+  it('keeps a line that leaves a dialog for another screen', () => {
+    const throughDialog = {
+      ...document,
+      states: [
+        state('/settings', 'user', true),
+        state('/settings$rename-workspace', 'user', true, '/settings'),
+        state('/settings/billing', 'user', true),
+      ],
+      edges: [
+        {
+          id: 'd1',
+          discoveredBy: 'runtime',
+          kind: 'action',
+          from: '/settings',
+          to: '/settings',
+          fromState: '/settings',
+          toState: '/settings$rename-workspace',
+          label: 'Rename workspace',
+          personaId: 'user',
+          matchKey: '/settings /settings',
+        },
+        {
+          id: 'd2',
+          discoveredBy: 'runtime',
+          kind: 'action',
+          from: '/settings',
+          to: '/settings/billing',
+          fromState: '/settings$rename-workspace',
+          toState: '/settings/billing',
+          label: 'Manage billing',
+          personaId: 'user',
+          matchKey: '/settings /settings/billing',
+        },
+      ],
+    } as unknown as JsxrayDocument;
+
+    const graph = buildGraph({ document: throughDialog, personaId: 'user', frame: 'browser' });
+    expect(screenNodes(graph).map((node) => node.id).sort()).toEqual(
+      ['user::/settings', 'user::/settings/billing'].sort(),
+    );
+    expect(graph.edges.map((edge) => [edge.id, edge.label])).toEqual([
+      ['user::/settings->/settings/billing', 'Navigate to /settings/billing'],
     ]);
   });
 
-  it('makes one node per state, so an overlay is its own node', () => {
-    const graph = buildGraph({ document, personaId: 'user', frame: 'browser' });
+  it('keeps an overlay the crawl never saw the screen under, or the screen is lost', () => {
+    const onlyOverlay = {
+      ...document,
+      states: [state('/', 'user', true), state('/settings$rename-workspace', 'user', true, '/settings')],
+      edges: [
+        {
+          id: 'o1',
+          discoveredBy: 'runtime',
+          kind: 'action',
+          from: '/',
+          to: '/settings',
+          fromState: '/',
+          toState: '/settings$rename-workspace',
+          label: 'Rename workspace',
+          personaId: 'user',
+          matchKey: '/ /settings',
+        },
+      ],
+    } as unknown as JsxrayDocument;
+
+    const graph = buildGraph({ document: onlyOverlay, personaId: 'user', frame: 'browser' });
     expect(screenNodes(graph).map((node) => node.id).sort()).toEqual(
-      ['user::/', 'user::/settings', 'user::/settings$rename-workspace'].sort(),
+      ['user::/', 'user::/settings$rename-workspace'].sort(),
     );
   });
 
@@ -158,10 +235,7 @@ describe('graph', () => {
 describe('edge anatomy', () => {
   it('names an edge by the transition, not by the words on the control', () => {
     const { edges } = buildGraph({ document, personaId: 'user', frame: 'browser' });
-    expect(edges.map((edge) => edge.label)).toEqual([
-      'Navigate to /settings',
-      'Open the rename workspace dialog',
-    ]);
+    expect(edges.map((edge) => edge.label)).toEqual(['Navigate to /settings']);
   });
 
   it('falls back to the control, shortened, when nothing structural changed', () => {
@@ -208,7 +282,7 @@ describe('layout', () => {
     const { nodes, edges } = laneOne();
     const laid = await layoutGraph(nodes, edges);
 
-    expect(laid).toHaveLength(3);
+    expect(laid).toHaveLength(2);
     for (const node of laid) {
       expect(Number.isFinite(node.position.x)).toBe(true);
       expect(Number.isFinite(node.position.y)).toBe(true);
@@ -226,9 +300,6 @@ describe('layout', () => {
     const laid = await layoutGraph(nodes, edges);
     const byId = new Map(laid.map((node) => [node.id, node.position.x]));
     expect(byId.get('user::/')!).toBeLessThan(byId.get('user::/settings')!);
-    expect(byId.get('user::/settings')!).toBeLessThan(
-      byId.get('user::/settings$rename-workspace')!,
-    );
   });
 
   it('leaves room between depths for the edge and its label', async () => {
@@ -270,7 +341,7 @@ describe('lanes', () => {
     const graph = buildGraph({ document, personaId: 'user', frame: 'browser' });
     const laid = await layoutLanes(graph.lanes);
     expect(laid.some((node) => node.type === 'lane')).toBe(false);
-    expect(laid).toHaveLength(3);
+    expect(laid).toHaveLength(2);
   });
 });
 
@@ -382,12 +453,29 @@ describe('findHiddenLinks roots at the seed', () => {
   });
 
   it('takes the seeds from the document', () => {
-    const seeded = { ...document, seedRoutes: ['/settings'] } as unknown as JsxrayDocument;
+    const seeded = {
+      ...document,
+      seedRoutes: ['/settings'],
+      states: [...document.states, state('/settings/billing', 'user', true)],
+      edges: [
+        ...document.edges,
+        {
+          id: 'e4',
+          discoveredBy: 'runtime',
+          kind: 'action',
+          from: '/settings',
+          to: '/settings/billing',
+          fromState: '/settings',
+          toState: '/settings/billing',
+          label: 'Billing',
+          personaId: 'user',
+          matchKey: '/settings /settings/billing',
+        },
+      ],
+    } as unknown as JsxrayDocument;
     const { lanes } = buildGraph({ document: seeded, personaId: 'user', frame: 'browser' });
     // `/ -> /settings` is dropped: /settings is the root, so it needs no line in.
-    expect(lanes[0]!.edges.map((edge) => edge.id)).toEqual([
-      'user::/settings->/settings$rename-workspace',
-    ]);
+    expect(lanes[0]!.edges.map((edge) => edge.id)).toEqual(['user::/settings->/settings/billing']);
   });
 });
 
