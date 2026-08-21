@@ -50,6 +50,7 @@ interface PlaywrightPage {
   waitForLoadState(state: string, options?: unknown): Promise<void>;
   evaluate<T>(fn: string, arg?: unknown): Promise<T>;
   screenshot(options?: unknown): Promise<Uint8Array>;
+  setViewportSize(size: { width: number; height: number }): Promise<void>;
   locator(selector: string): PlaywrightLocator;
   setDefaultTimeout(ms: number): void;
   addStyleTag(options: { content: string }): Promise<unknown>;
@@ -124,7 +125,8 @@ export const playwrightRenderer: RendererProvider = {
 class PlaywrightSession implements RendererSession {
   readonly rendererId = 'playwright';
   readonly renderTarget: RenderTarget;
-  readonly viewport: { width: number; height: number };
+  /** Mutable, because `resize` moves the page to another viewport (§7.8). */
+  viewport: { width: number; height: number };
   readonly deviceScaleFactor: number;
   private historyRefusals = 0;
   private historyAnswered = false;
@@ -226,6 +228,17 @@ class PlaywrightSession implements RendererSession {
   async screenshot(): Promise<Uint8Array> {
     await this.page.evaluate<void>(AWAIT_PAINT).catch(() => undefined);
     return this.page.screenshot({ animations: 'disabled', caret: 'hide', scale: 'css' });
+  }
+
+  /**
+   * §7.8 — the app re-lays itself out on a resize, and a responsive one swaps whole
+   * regions doing it, so the page is settled again before anything reads it.
+   */
+  async resize(viewport: { width: number; height: number }): Promise<void> {
+    if (viewport.width === this.viewport.width && viewport.height === this.viewport.height) return;
+    await this.page.setViewportSize(viewport);
+    this.viewport = viewport;
+    await this.settle();
   }
 
   async clickables(): Promise<Clickable[]> {
