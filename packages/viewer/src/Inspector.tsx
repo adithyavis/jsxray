@@ -1,6 +1,6 @@
 import { useState, type ReactElement } from 'react';
 import type { Edge, JsxrayDocument, ScreenState } from '@jsxray/core';
-import type { ScreenNodeData } from './graph.js';
+import { captureAt, type ScreenNodeData } from './graph.js';
 import { screenOf, titleOf } from './document.js';
 import { Lightbox } from './Lightbox.js';
 
@@ -23,6 +23,8 @@ export function Inspector({ document, node, onSelect, onClose }: InspectorProps)
   const state = node.state;
   const screen = screenOf(document, state);
   const [zoomed, setZoomed] = useState(false);
+  // The panel shows the viewport the canvas is showing (§7.8).
+  const capture = captureAt(state, node.viewport);
 
   // This is one persona's state, so only that persona's traversals belong here.
   const outgoing = document.edges.filter(
@@ -49,20 +51,22 @@ export function Inspector({ document, node, onSelect, onClose }: InspectorProps)
       </header>
 
       <div className="panel-body">
-        {state.capture ? (
+        {capture ? (
           <button
             type="button"
             className="shot"
             onClick={() => setZoomed(true)}
             title="See this capture big"
           >
-            <img src={state.capture.path} alt={`Capture of ${titleOf(state.signature)}`} />
+            <img src={capture.path} alt={`Capture of ${titleOf(state.signature)}`} />
           </button>
         ) : (
           <div className="shot shot-none">
             <span className="shot-chip">{baseName(screen?.file) ?? 'no capture'}</span>
             <span className="shot-why">
-              {NO_CAPTURE[state.captureStatus] ?? 'There is no capture for this state.'}
+              {state.captures.length
+                ? `Not captured at ${node.viewport}.`
+                : (NO_CAPTURE[state.captureStatus] ?? 'There is no capture for this state.')}
             </span>
           </div>
         )}
@@ -201,11 +205,11 @@ export function Inspector({ document, node, onSelect, onClose }: InspectorProps)
         </section>
       </div>
 
-      {zoomed && state.capture ? (
+      {zoomed && capture ? (
         <Lightbox
           title={titleOf(state.signature)}
           route={state.route}
-          capture={state.capture}
+          capture={capture}
           onClose={() => setZoomed(false)}
         />
       ) : null}

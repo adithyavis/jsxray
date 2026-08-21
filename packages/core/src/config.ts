@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createJiti } from 'jiti';
+import type { ViewportName } from './schema.js';
 
 export const DEFAULT_OUT_DIR = '.jsxray';
 export const DOCUMENT_FILENAME = 'jsxray.json';
@@ -62,6 +63,11 @@ export interface Bounds {
   timeoutMs?: number;
 }
 
+export const VIEWPORT_SIZE: Record<ViewportName, { width: number; height: number }> = {
+  desktop: { width: 1440, height: 900 },
+  mobile: { width: 390, height: 844 },
+};
+
 export interface CaptureRules {
   /**
    * §7.10 — how old a screen must be, counting from the navigation that started it,
@@ -80,7 +86,8 @@ export interface JsxrayConfig {
   ignore?: IgnoreRules;
   out?: string;
   renderTarget?: 'web' | 'native';
-  viewport?: { width: number; height: number };
+  /** §7.8 — every size the screen is photographed at. The first is the size it is crawled at. */
+  viewport?: ViewportName[];
   /** Drive an installed browser instead of the bundled one, e.g. `'chrome'`. */
   channel?: string | null;
   bounds?: Bounds;
@@ -98,7 +105,8 @@ export interface ResolvedConfig {
   ignore: Required<IgnoreRules>;
   out: string;
   renderTarget: 'web' | 'native';
-  viewport: { width: number; height: number };
+  /** Never empty; the first entry is the crawl viewport (§7.8). */
+  viewport: ViewportName[];
   channel: string | null;
   bounds: Required<Bounds>;
   capture: Required<CaptureRules>;
@@ -125,9 +133,11 @@ export function resolveConfig(config: JsxrayConfig, configFile: string | null): 
     },
     out: config.out ?? DEFAULT_OUT_DIR,
     renderTarget: config.renderTarget ?? 'web',
-    viewport:
-      config.viewport ??
-      (config.renderTarget === 'native' ? { width: 390, height: 844 } : { width: 1280, height: 800 }),
+    viewport: config.viewport?.length
+      ? [...new Set(config.viewport)]
+      : config.renderTarget === 'native'
+        ? ['mobile']
+        : ['desktop'],
     channel: config.channel ?? null,
     bounds: {
       maxDepth: config.bounds?.maxDepth ?? 4,

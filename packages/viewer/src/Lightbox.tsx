@@ -56,7 +56,7 @@ export function Lightbox({ title, route, capture, onClose }: LightboxProps): Rea
           <span className="lightbox-title">{title}</span>
           <code className="lightbox-route">{route}</code>
           <span className="lightbox-size">
-            {capture.viewport.width}×{capture.viewport.height}
+            {capture.viewport} {capture.size.width}×{capture.size.height}
           </span>
           <a href={capture.path} target="_blank" rel="noreferrer">
             open the file

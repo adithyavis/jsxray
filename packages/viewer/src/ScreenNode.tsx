@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { FRAME_SIZE, type ScreenNodeData } from './graph.js';
+import { captureAt, FRAME_SIZE, type ScreenNodeData } from './graph.js';
 
 /** §7.8 — what the frame says when it has no picture to show. */
 const EMPTY_REASON: Record<string, string> = {
@@ -12,16 +12,21 @@ const EMPTY_REASON: Record<string, string> = {
 
 export function ScreenNode({ data, selected }: NodeProps): ReactElement {
   const node = data as ScreenNodeData;
-  const size = FRAME_SIZE[node.frame];
-  const capture = node.state.capture;
+  const size = FRAME_SIZE[node.viewport];
+  const capture = captureAt(node.state, node.viewport);
   const loading = node.state.captureStatus === 'loading';
+  // §7.8 — a state photographed at the other viewport only says that, rather than
+  // borrowing the reason the states with no picture at all have.
+  const empty = node.state.captures.length
+    ? `not captured at ${node.viewport}`
+    : (EMPTY_REASON[node.state.captureStatus] ?? 'no capture');
 
   return (
     <div className="node" style={{ width: size.width }} title={node.state.route}>
       <div className="node-eyebrow">{node.eyebrow ?? ' '}</div>
 
       <div
-        className={`frame frame-${node.frame}${selected ? ' frame-selected' : ''}`}
+        className={`frame frame-${node.viewport}${selected ? ' frame-selected' : ''}`}
         style={{ height: size.height - 52 }}
       >
         <div className="frame-chrome">
@@ -33,7 +38,7 @@ export function ScreenNode({ data, selected }: NodeProps): ReactElement {
           {capture ? (
             <img src={capture.path} alt={node.title} draggable={false} loading="lazy" />
           ) : (
-            <div className="frame-empty">{EMPTY_REASON[node.state.captureStatus] ?? 'no capture'}</div>
+            <div className="frame-empty">{empty}</div>
           )}
         </div>
       </div>

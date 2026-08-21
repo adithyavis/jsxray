@@ -31,6 +31,9 @@ export type RouterKind =
   | (string & {});
 export type RenderTarget = 'web' | 'native' | (string & {});
 
+/** §7.8 — the sizes a screen is photographed at, by name. */
+export type ViewportName = 'desktop' | 'mobile';
+
 export interface Evidence {
   fact: string;
   source: string;
@@ -188,11 +191,13 @@ export interface OverlayRef {
 }
 
 export interface Capture {
+  /** §7.8 — which viewport this picture is of. */
+  viewport: ViewportName;
   /** Document-relative (§2). */
   path: string;
   renderer: string;
   renderTarget: RenderTarget;
-  viewport: { width: number; height: number };
+  size: { width: number; height: number };
   deviceScaleFactor: number;
 }
 
@@ -246,7 +251,8 @@ export interface ScreenState {
   url: string;
   personaId: string;
   overlays: OverlayRef[];
-  capture: Capture | null;
+  /** §7.8 — one per viewport that was photographed; empty when none was. */
+  captures: Capture[];
   captureStatus: CaptureStatus;
   reachedVia: Step[];
   deadActions: DeadAction[];

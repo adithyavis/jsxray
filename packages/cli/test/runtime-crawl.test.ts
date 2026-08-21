@@ -62,6 +62,8 @@ beforeAll(async () => {
           },
         ],
         seedRoutes: ['/', '/settings', '/signup', '/secrets', '/billing', '/library'],
+        // §7.8 — one walk, a picture at each size.
+        viewport: ['desktop', 'mobile'],
         ignore: { screenshots: ['/secrets'] },
         bounds: { maxDepth: 3, maxStates: 40, actionCap: 8, timeoutMs: 120_000 },
         // The fixture paints in one pass, so there is no skeleton to wait out (§7.10).
@@ -128,24 +130,32 @@ describe('crawl', () => {
 
   it('keeps every capture the document points at', () => {
     const referenced = document.states
-      .filter((state) => state.capture)
-      .map((state) => path.join(outDir, state.capture!.path));
+      .flatMap((state) => state.captures)
+      .map((capture) => path.join(outDir, capture.path));
     expect(referenced.length).toBeGreaterThan(0);
     expect(referenced.filter((file) => !fs.existsSync(file))).toEqual([]);
   });
 
-  it('writes a capture per state and records the renderer that produced it', () => {
+  it('writes a capture per viewport and records the renderer that produced it', () => {
     const dashboard = document.states.find(
       (state) => state.signature === '/dashboard' && state.personaId === 'user',
     );
-    expect(dashboard?.capture?.renderer).toBe('playwright');
-    expect(fs.existsSync(path.join(outDir, dashboard!.capture!.path))).toBe(true);
+    const captures = dashboard?.captures ?? [];
+    expect(captures.map((capture) => capture.viewport)).toEqual(['desktop', 'mobile']);
+    for (const capture of captures) {
+      expect(capture.renderer).toBe('playwright');
+      expect(fs.existsSync(path.join(outDir, capture.path))).toBe(true);
+    }
+    // The two pictures are of the same screen at different widths, not one file twice.
+    expect(captures[0]?.size.width).toBe(1440);
+    expect(captures[1]?.size.width).toBe(390);
+    expect(captures[0]?.path).not.toBe(captures[1]?.path);
   });
 
   it('visits an ignore.screenshots route but never captures it', () => {
     const secrets = document.states.find((state) => state.route === '/secrets');
     expect(secrets).toBeDefined();
-    expect(secrets?.capture).toBeNull();
+    expect(secrets?.captures).toEqual([]);
     expect(secrets?.captureStatus).toBe('privacy');
   });
 
@@ -161,7 +171,7 @@ describe('crawl', () => {
   it('reports a screen that rendered nothing instead of writing a blank capture', () => {
     const blank = document.states.find((state) => state.route === '/blank');
     expect(blank).toBeDefined();
-    expect(blank?.capture).toBeNull();
+    expect(blank?.captures).toEqual([]);
     expect(blank?.captureStatus).toBe('blank');
     expect(document.diagnostics.some((diagnostic) => diagnostic.code === 'blank-render')).toBe(true);
   });

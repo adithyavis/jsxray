@@ -623,15 +623,15 @@ kbd {
   background: #303030;
 }
 
-.frame-phone .frame-chrome {
+.frame-mobile .frame-chrome {
   justify-content: center;
 }
 
-.frame-phone .frame-chrome span:not(:first-child) {
+.frame-mobile .frame-chrome span:not(:first-child) {
   display: none;
 }
 
-.frame-phone .frame-chrome span:first-child {
+.frame-mobile .frame-chrome span:first-child {
   width: 40px;
   height: 4px;
   border-radius: 2px;

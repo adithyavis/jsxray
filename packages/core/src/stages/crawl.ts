@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   ASSET_DIRNAME,
   resolveCredentials,
+  VIEWPORT_SIZE,
   type FlowStep,
   type PersonaConfig,
   type ResolvedConfig,
@@ -29,6 +30,7 @@ import {
   type Overlay,
 } from '../runtime.js';
 import type {
+  Capture,
   Diagnostic,
   Edge,
   JsxrayDocument,
@@ -36,6 +38,7 @@ import type {
   ScreenState,
   Step,
   UntriedReason,
+  ViewportName,
 } from '../schema.js';
 
 export interface CrawlInput {
@@ -91,6 +94,10 @@ export async function crawl(input: CrawlInput): Promise<CrawlOutput> {
 
   // §8 — one clock for the whole run, so personas stay diffable against each other.
   const clockMs = config.clock ?? Date.now();
+  // §7.8 — the walk runs at the first viewport; the rest are photographed, not explored.
+  const crawlViewport = config.viewport[0] ?? 'desktop';
+  // The renderer is the same for every persona, so its shortcoming is said once.
+  let saidNoResize = false;
 
   for (const persona of personas) {
     clearCaptures(input.outDir, persona.id);
@@ -115,7 +122,7 @@ export async function crawl(input: CrawlInput): Promise<CrawlOutput> {
         baseUrl: input.baseUrl,
         renderTarget: config.renderTarget,
         headed: input.headed,
-        viewport: config.viewport,
+        viewport: VIEWPORT_SIZE[crawlViewport],
         timeoutMs: config.bounds.timeoutMs,
         clockMs,
         channel: config.channel,
@@ -128,7 +135,17 @@ export async function crawl(input: CrawlInput): Promise<CrawlOutput> {
           level: 'info',
           stage: 'crawl',
           code: 'native-in-browser',
-          message: `renderTarget is "native" but captures come from a browser at ${config.viewport.width}×${config.viewport.height}, not from a device`,
+          message: `renderTarget is "native" but captures come from a browser at ${sizeLabel(crawlViewport)}, not from a device`,
+        });
+      }
+
+      if (config.viewport.length > 1 && !session.resize && !saidNoResize) {
+        saidNoResize = true;
+        diagnostics.push({
+          level: 'warn',
+          stage: 'crawl',
+          code: 'no-resize',
+          message: `renderer "${renderer.id}" cannot resize; captured at ${crawlViewport} only, not at ${config.viewport.slice(1).join(', ')}`,
         });
       }
 
@@ -217,11 +234,12 @@ function mergeInferredRoutes(input: {
   if (!dropped.length) return;
 
   for (const state of dropped) {
-    if (!state.capture) continue;
-    try {
-      fs.rmSync(path.join(input.outDir, state.capture.path), { force: true });
-    } catch {
-      /* an orphaned capture is untidy, not fatal */
+    for (const capture of state.captures) {
+      try {
+        fs.rmSync(path.join(input.outDir, capture.path), { force: true });
+      } catch {
+        /* an orphaned capture is untidy, not fatal */
+      }
     }
   }
 
@@ -953,7 +971,7 @@ class PersonaCrawl {
       url: observation.url,
       personaId: this.input.persona.id,
       overlays: observation.overlays,
-      capture: null,
+      captures: [],
       captureStatus: 'not-run',
       reachedVia,
       deadActions: [],
@@ -1010,32 +1028,61 @@ class PersonaCrawl {
         message: `${state.signature} was still loading ${this.input.config.capture.delayMs}ms after it began; the capture is of that, not of the screen`,
       });
     }
+    // §7.8 — one visit, one picture per viewport. A renderer that cannot resize
+    // has said so once already (`no-resize`), and photographs the crawl size only.
+    const viewports = session.resize
+      ? this.input.config.viewport
+      : this.input.config.viewport.slice(0, 1);
+
     try {
-      const bytes = await timed(`      screenshot ${state.signature}`, () => session.screenshot());
+      for (const viewport of viewports) {
+        const capture = await this.shoot(session, state, viewport);
+        if (capture) state.captures.push(capture);
+      }
+    } finally {
+      // The walk carries on at the size it began at, whatever the pictures cost.
+      const crawlViewport = this.input.config.viewport[0] ?? 'desktop';
+      await session.resize?.(VIEWPORT_SIZE[crawlViewport]).catch(() => undefined);
+    }
+
+    state.captureStatus = state.captures.length ? status : 'failed';
+  }
+
+  /** One viewport's picture, or null with a diagnostic if it could not be taken. */
+  private async shoot(
+    session: RendererSession,
+    state: ScreenState,
+    viewport: ViewportName,
+  ): Promise<Capture | null> {
+    try {
+      await session.resize?.(VIEWPORT_SIZE[viewport]);
+      const bytes = await timed(`      screenshot ${state.signature} ${viewport}`, () =>
+        session.screenshot(),
+      );
       const file = path.join(
         this.input.outDir,
         ASSET_DIRNAME,
         this.input.persona.id,
-        `${slugForFile(state.signature)}.png`,
+        `${slugForFile(state.signature)}--${viewport}.png`,
       );
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, bytes);
-      state.capture = {
+      return {
+        viewport,
         path: documentRelative(this.input.outDir, file),
         renderer: session.rendererId,
         renderTarget: session.renderTarget,
-        viewport: session.viewport,
+        size: { ...session.viewport },
         deviceScaleFactor: session.deviceScaleFactor,
       };
-      state.captureStatus = status;
     } catch (error) {
-      state.captureStatus = 'failed';
       this.input.diagnostics.push({
         level: 'warn',
         stage: 'crawl',
         code: 'capture-failed',
-        message: `${state.signature}: ${messageOf(error)}`,
+        message: `${state.signature} at ${viewport}: ${messageOf(error)}`,
       });
+      return null;
     }
   }
 
@@ -1202,6 +1249,12 @@ function toOverlayRef(overlay: Overlay): OverlayRef {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** §4.4 — a diagnostic says the size in pixels, because that is what is disputed. */
+function sizeLabel(viewport: ViewportName): string {
+  const size = VIEWPORT_SIZE[viewport];
+  return `${viewport} (${size.width}×${size.height})`;
 }
 
 function unique(values: readonly string[]): string[] {

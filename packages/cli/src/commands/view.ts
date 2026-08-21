@@ -69,14 +69,17 @@ function exportSingleFile(
 
   const inlined = structuredClone(document);
   for (const state of inlined.states) {
-    if (!state.capture) continue;
-    const source = path.resolve(documentDir, state.capture.path);
-    try {
-      state.capture.path = `data:image/png;base64,${fs.readFileSync(source).toString('base64')}`;
-    } catch {
-      state.capture = null;
-      state.captureStatus = 'failed';
-    }
+    // §7.8 — every viewport's picture travels, so the toggle works offline too.
+    state.captures = state.captures.filter((capture) => {
+      const source = path.resolve(documentDir, capture.path);
+      try {
+        capture.path = `data:image/png;base64,${fs.readFileSync(source).toString('base64')}`;
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    if (!state.captures.length && state.captureStatus === 'ok') state.captureStatus = 'failed';
   }
 
   const shell = fs.readFileSync(path.join(singleDir, 'index.html'), 'utf8');

@@ -334,13 +334,13 @@ Either peer is heavy and platform-gated — an iOS simulator needs Xcode, so tho
 macOS-only — which is exactly why the renderer resolves lazily.
 
 **Expo on the web is already covered.** An Expo app runs in a browser through React Native Web, so
-`renderTarget: 'native'` plus Playwright at a phone viewport produces a usable map today. That
+`renderTarget: 'native'` plus Playwright at the `mobile` viewport produces a usable map today. That
 splits Expo support into two halves that ship independently: `router/expo` is a v2 *router* that
 pays off immediately against the web build, while a native renderer is needed only for real device
 chrome and native-only surfaces.
 
 That intermediate has to stay honest, so **every capture records the renderer that produced it**.
-A phone-viewport browser screenshot of an Expo app is a legitimate artifact; presenting it as a
+A mobile-viewport browser screenshot of an Expo app is a legitimate artifact; presenting it as a
 device capture without saying so is not (product §7.2).
 
 ## 5. Static analysis is crawl guidance
@@ -645,6 +645,22 @@ static side of product §9 — annotating each element with the `{isAdmin && …
 
 ### 7.8 What the capture is a picture of
 
+**One walk, a picture per viewport.** `viewport` names the sizes a screen is photographed at —
+`desktop` (1440×900) and `mobile` (390×844) — and a state carries one `Capture` per size. The
+first name is the size the **walk** runs at: what is clicked, what is found, and what the graph
+therefore is. The rest are photographed only. On reaching a state the renderer is resized, settled
+and shot once per viewport, then put back to the crawl size before the walk goes on, so the two
+pictures are of the same visit and the map does not change under the reader.
+
+Crawling each size instead would be two runs, not one: a responsive app collapses its nav into a
+menu at 390px, which moves what is reachable and therefore what the states and the edges are. That
+is a real second map and is worth having; it is not what this is. Here the mobile picture is
+evidence about the same screen — that is what the viewer's viewport toggle switches between.
+
+A renderer that cannot resize photographs the crawl size only, and says so once (`no-resize`).
+A viewport whose shot throws costs that picture and a `capture-failed` diagnostic naming the size;
+`captureStatus` is `failed` only when no size yielded a picture at all.
+
 Every state carries `captureStatus`, and it is the frame's own account of itself:
 
 | Status | File | Means |
@@ -653,7 +669,7 @@ Every state carries `captureStatus`, and it is the frame's own account of itself
 | `loading` | yes | a skeleton that was still there after the holds (§7.10) — captured, and flagged as what it is |
 | `blank` | no | the body painted nothing |
 | `privacy` | no | `ignore.screenshots` covers the route (§9) |
-| `failed` | no | the screenshot itself threw |
+| `failed` | no | every viewport's screenshot threw |
 | `not-run` | no | the crawl did not reach this state's capture |
 
 A screenshot of a page that painted nothing — an error shell, a redirect that resolved to nothing,
@@ -934,6 +950,7 @@ export default defineConfig({
   loginFlow: { start: '/login', steps: [ /* fill / tap */ ] },  // handed to auth.login (§4)
   flows: [ /* named deep-path flows */ ],
   seedRoutes: ['/', '/dashboard'],
+  viewport: ['desktop', 'mobile'],        // sizes to photograph; the first is crawled (§7.8)
   capture: { delayMs: 2000 },             // hold after settling, so skeletons resolve (§7.10)
   ignore: {                               // all three are globs over the canonical route (§9)
     navigation:  ['**/beta'],             // never click
@@ -1168,10 +1185,12 @@ An overlay whose screen the crawl never saw bare has nothing to fold onto and st
 the only record of that screen, and dropping it would drop the screen. On Bluesky this rule takes
 81 states down to 53 nodes, and what it removes is `$test` and `$hide-trending-topics`.
 
-**Node** — a device frame; phone for native targets, browser for web, reader-overridable. Frame
-geometry is fixed per device, so a capture and a not-yet-captured state occupy the same box and
-dropping captures in later shifts no layout. The frame holds the capture, or an explicit empty
-state saying the crawl has not run. There is no wireframe.
+**Node** — a device frame, one per viewport (§7.8): desktop and mobile. The **Viewport** control
+offers only the sizes the run actually photographed and switches every node at once; frame geometry
+is fixed per size, so a capture and a not-yet-captured state occupy the same box and dropping
+captures in later shifts no layout. The frame holds that viewport's capture, or an explicit empty
+state saying why there is none — the crawl has not run, or this screen was photographed at the
+other size only. There is no wireframe.
 
 **Node anatomy** — three derived strings, computed in the viewer only because they are
 presentation, not analysis:
@@ -1406,7 +1425,7 @@ the smoke harness finds the ones we did not — every item in §17.2 came from i
 | Parser emits intents, router makes edges | keeps the two axes independent across frameworks |
 | **The router supplies the nav recognizers** | what a navigation *looks like* is a property of the routing library, not the language — `<Link href>` vs `<Link to>` vs `navigation.navigate` |
 | **Providers are directories; a heavy dependency earns an optional peer, not a package** | the weight is in the dependency, not the adapter — and the renderer is the axis that multiplies, so package-per-renderer would rebuild the sprawl |
-| **Captures record their renderer** | an Expo app photographed in a phone-viewport browser is honest only if the document says so |
+| **Captures record their renderer** | an Expo app photographed in a mobile-viewport browser is honest only if the document says so |
 | **No third-party provider API; a finite supported set** | publishing the interface would freeze the four axes before the runtime half has taught us their shape |
 | **Kind ids admit unknown values** | `detect` must be able to name a stack it cannot analyze; in aggregate those diagnostics are the roadmap |
 | **Router discovery is a ranked list** | a generated route tree beats a file convention beats a parsed config, and which applies is a property of the repo |
@@ -1452,7 +1471,7 @@ history — the consequence column is why.
 | No capture beats a blank one | a white rectangle in the frame asserts the screen looks like that; the viewer already has an empty state, and `captureStatus: "blank"` is a fact the canvas can show |
 | **Cap every settle wait** | `image.decode()` on an image that never loads never settles, and `.catch()` does not catch a hang. One slow avatar on Bluesky's feed hung the crawl forever — no capture, no diagnostic, no exit. A capped wait risks a slightly unsettled capture; an uncapped one risks no capture at all |
 | Detect the app package inside a monorepo | dub's root holds only build tooling, so `detect` said "unknown" and the whole run produced nothing |
-| Playwright serves `native` targets too | an Expo app got no renderer at all, though §4.4 names phone-viewport Playwright as the v1 answer for it |
+| Playwright serves `native` targets too | an Expo app got no renderer at all, though §4.4 names mobile-viewport Playwright as the v1 answer for it |
 | Resolve a `.js` specifier to its `.ts`/`.tsx` source | `export { default } from './page.js'` resolved to nothing, so those screens had no component |
 | Split identifiers on camelCase before matching field names | `name="cardNumber"` with no label slipped past the payment refusal; `\bcard\b` does not match inside `cardNumber` |
 | The renderer resolves a control's kind in the page, not from an attribute | filling a `<select>` with `fill()` throws, and the whole form traversal dies one field in |
