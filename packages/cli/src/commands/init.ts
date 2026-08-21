@@ -49,6 +49,8 @@ export default defineConfig({
 
   seedRoutes: ['/'],
 
+  viewport: ['desktop'],                   // add 'mobile' for a picture at both sizes
+
   capture: {
     delayMs: 2000,                         // hold after settling, so skeletons resolve first
   },

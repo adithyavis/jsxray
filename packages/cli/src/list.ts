@@ -39,7 +39,9 @@ export function listDocument(document: JsxrayDocument): string {
     lines.push('');
     lines.push(`states (${states.length})`);
     for (const state of states) {
-      const capture = state.capture ? state.capture.path : `— ${state.captureStatus}`;
+      const capture = state.captures.length
+        ? state.captures.map((shot) => `${shot.viewport}:${shot.path}`).join(' ')
+        : `— ${state.captureStatus}`;
       const untried = state.untriedActions.length
         ? `  (${state.untriedActions.length} untried)`
         : '';
