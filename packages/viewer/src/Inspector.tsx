@@ -57,9 +57,6 @@ export function Inspector({ document, node, onSelect, onClose }: InspectorProps)
             title="See this capture big"
           >
             <img src={state.capture.path} alt={`Capture of ${titleOf(state.signature)}`} />
-            <span className="shot-foot">
-              {state.capture.viewport.width}×{state.capture.viewport.height} · see it big
-            </span>
           </button>
         ) : (
           <div className="shot shot-none">
@@ -299,10 +296,10 @@ function DegreeCard({
       <span className="card-value">{total}</span>
       <span className="card-note">
         {total === 0
-          ? 'none'
+          ? ""
           : drawn === total
-            ? 'all drawn'
-            : `${drawn} drawn, ${total - drawn} not`}
+            ? ""
+            : `${drawn} drawn`}
       </span>
     </div>
   );
