@@ -110,6 +110,7 @@ export interface LaunchOptions {
   baseUrl: string;
   renderTarget: RenderTarget;
   headed: boolean;
+  /** The size the crawl runs at — the first configured viewport (§7.8). */
   viewport: { width: number; height: number };
   deviceScaleFactor?: number;
   timeoutMs: number;
@@ -128,6 +129,7 @@ export type NavigationMode = 'load' | 'history';
 export interface RendererSession {
   readonly rendererId: string;
   readonly renderTarget: RenderTarget;
+  /** The size the page is laid out at right now — `resize` moves it (§7.8). */
   readonly viewport: { width: number; height: number };
   readonly deviceScaleFactor: number;
 
@@ -146,6 +148,11 @@ export interface RendererSession {
   renderStatus(): Promise<RenderStatus>;
   overlays(): Promise<Overlay[]>;
   screenshot(): Promise<Uint8Array>;
+  /**
+   * §7.8 — lay the same screen out at another size, so one visit yields a picture
+   * per viewport. A renderer without it is photographed at the crawl size only.
+   */
+  resize?(viewport: { width: number; height: number }): Promise<void>;
   clickables(): Promise<Clickable[]>;
   forms(): Promise<FormGroup[]>;
   tap(ref: ElementRef): Promise<void>;
