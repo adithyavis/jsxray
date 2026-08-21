@@ -180,6 +180,7 @@ export default defineConfig({
     ],
   },
   seedRoutes: ['/', '/dashboard'],
+  viewport: ['desktop', 'mobile'],     // photographed at both; the first is the one crawled
   capture: { delayMs: 3000 },          // a screen must be this old before it is worth a shot
   ignore: {
     navigation:  ['**/beta'],
