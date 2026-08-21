@@ -10,9 +10,9 @@ import {
   type Node,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import type { JsxrayDocument, ScreenState } from '@jsxray/core';
+import type { JsxrayDocument, ScreenState, ViewportName } from '@jsxray/core';
 import { hasRun, loadDocument } from './document.js';
-import { buildGraph, frameForCaptures, type FrameKind, type ScreenNodeData } from './graph.js';
+import { buildGraph, viewportsOf, type ScreenNodeData } from './graph.js';
 import { flowsOf, type Flow } from './flows.js';
 import { layoutLanes } from './layout.js';
 import { Inspector } from './Inspector.js';
@@ -27,6 +27,11 @@ const NODE_TYPES = { screen: ScreenNode, lane: LaneNode };
  * as noise on top of the picture rather than as a label for it. The frames stay.
  */
 const LOD_FAR = 0.45;
+
+const VIEWPORT_LABEL: Record<ViewportName, string> = {
+  desktop: 'Desktop',
+  mobile: 'Mobile',
+};
 
 export function App(): ReactElement {
   const [document, setDocument] = useState<JsxrayDocument | null>(null);
@@ -79,7 +84,9 @@ interface Selection {
 function Workbench({ document }: { document: JsxrayDocument }): ReactElement {
   const crawled = hasRun(document, 'crawl');
   const [personaId, setPersonaId] = useState<string | null>(null);
-  const [frame, setFrame] = useState<FrameKind>(() => frameForCaptures(document));
+  // §7.8 — the toggle offers the viewports this run photographed, and starts at the first.
+  const viewports = useMemo(() => viewportsOf(document), [document]);
+  const [viewport, setViewport] = useState<ViewportName>(() => viewports[0]!);
   const [selected, setSelected] = useState<Selection | null>(null);
   const [flowId, setFlowId] = useState<string | null>(null);
   const [showNonPages, setShowNonPages] = useState(false);
@@ -88,15 +95,15 @@ function Workbench({ document }: { document: JsxrayDocument }): ReactElement {
   const filterRef = useRef<HTMLInputElement>(null);
 
   const graph = useMemo(
-    () => buildGraph({ document, personaId, frame }),
-    [document, personaId, frame],
+    () => buildGraph({ document, personaId, viewport }),
+    [document, personaId, viewport],
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState(graph.edges);
   const { setCenter, fitView, getZoom } = useReactFlow();
 
-  // A new persona or a new frame is a new map, so it is framed like one.
+  // A new persona or a new viewport is a new map, so it is framed like one.
   useEffect(() => {
     let live = true;
     setEdges(graph.edges);
@@ -329,13 +336,10 @@ function Workbench({ document }: { document: JsxrayDocument }): ReactElement {
         />
 
         <Segmented
-          label="Frame"
-          value={frame}
-          options={[
-            { value: 'browser', label: 'Browser' },
-            { value: 'phone', label: 'Phone' },
-          ]}
-          onChange={(value) => setFrame(value as FrameKind)}
+          label="Viewport"
+          value={viewport}
+          options={viewports.map((name) => ({ value: name, label: VIEWPORT_LABEL[name] }))}
+          onChange={(value) => setViewport(value as ViewportName)}
         />
 
         <span className="topbar-spacer" />

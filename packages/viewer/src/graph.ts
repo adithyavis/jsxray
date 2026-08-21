@@ -1,12 +1,10 @@
-import type { JsxrayDocument, ScreenState } from '@jsxray/core';
+import type { Capture, JsxrayDocument, ScreenState, ViewportName } from '@jsxray/core';
 import type { Edge, Node } from '@xyflow/react';
 import { eyebrowOf, screenOf, sectionOf, titleOf } from './document.js';
 
-export type FrameKind = 'browser' | 'phone';
-
-export const FRAME_SIZE: Record<FrameKind, { width: number; height: number }> = {
-  browser: { width: 300, height: 232 },
-  phone: { width: 176, height: 348 },
+export const FRAME_SIZE: Record<ViewportName, { width: number; height: number }> = {
+  desktop: { width: 300, height: 232 },
+  mobile: { width: 176, height: 348 },
 };
 
 /** §14 typing note — named fields stay out of the index signature. */
@@ -17,7 +15,7 @@ export interface ScreenNodeFields {
   eyebrow: string | null;
   /** The eyebrow before it is shouted — what the flow list calls this screen. */
   section: string | null;
-  frame: FrameKind;
+  viewport: ViewportName;
   state: ScreenState;
   inbound: number;
   outbound: number;
@@ -37,7 +35,7 @@ export type LaneNodeData = LaneNodeFields & Record<string, unknown>;
 export interface GraphInput {
   document: JsxrayDocument;
   personaId: string | null;
-  frame: FrameKind;
+  viewport: ViewportName;
 }
 
 /**
@@ -64,30 +62,32 @@ export function nodeId(personaId: string, signature: string): string {
   return `${personaId}::${signature}`;
 }
 
-/**
- * The frame follows the capture, not the framework. An Expo app crawled at a
- * desktop viewport is a desktop screenshot, and drawing it in a phone frame
- * shrinks a real capture to fit a lie about it (§7.2).
- */
-export function frameForCaptures(document: JsxrayDocument): FrameKind {
-  const captured = document.states.find((state) => state.capture);
-  if (captured?.capture) {
-    return captured.capture.viewport.width >= captured.capture.viewport.height
-      ? 'browser'
-      : 'phone';
-  }
-  return document.framework?.renderTarget === 'native' ? 'phone' : 'browser';
+/** §7.8 — the viewports this run actually photographed, in a fixed order. */
+export function viewportsOf(document: JsxrayDocument): ViewportName[] {
+  const order: ViewportName[] = ['desktop', 'mobile'];
+  const captured = new Set(
+    document.states.flatMap((state) => state.captures.map((capture) => capture.viewport)),
+  );
+  const found = order.filter((viewport) => captured.has(viewport));
+  if (found.length) return found;
+  // Nothing captured yet, so the framework is all there is to go on (§7.2).
+  return [document.framework?.renderTarget === 'native' ? 'mobile' : 'desktop'];
+}
+
+/** The picture of this state at that viewport, or none if it was not taken. */
+export function captureAt(state: ScreenState, viewport: ViewportName): Capture | null {
+  return state.captures.find((capture) => capture.viewport === viewport) ?? null;
 }
 
 export function buildGraph(input: GraphInput): Graph {
-  const { document, personaId, frame } = input;
+  const { document, personaId, viewport } = input;
 
   const lanes: GraphLane[] = [];
   let hiddenLinks = 0;
 
   for (const id of personaOrder(document)) {
     if (personaId && id !== personaId) continue;
-    const built = buildLane(document, id, frame);
+    const built = buildLane(document, id, viewport);
     if (!built.lane.nodes.length) continue;
     lanes.push(built.lane);
     hiddenLinks += built.hiddenLinks;
@@ -108,7 +108,7 @@ function personaOrder(document: JsxrayDocument): string[] {
 function buildLane(
   document: JsxrayDocument,
   personaId: string,
-  frame: FrameKind,
+  viewport: ViewportName,
 ): { lane: GraphLane; hiddenLinks: number } {
   // The crawl records one state per signature per persona (§7.6), so first wins.
   const bySignature = new Map<string, ScreenState>();
@@ -193,7 +193,7 @@ function buildLane(
     });
   }
 
-  const size = FRAME_SIZE[frame];
+  const size = FRAME_SIZE[viewport];
   const nodes: Node[] = [...bySignature.entries()].map(([signature, state]) => {
     const screen = screenOf(document, state);
     const data: ScreenNodeData = {
@@ -202,7 +202,7 @@ function buildLane(
       title: titleOf(signature),
       eyebrow: eyebrowOf(screen, state.route),
       section: sectionOf(screen, state.route),
-      frame,
+      viewport,
       state,
       inbound: inbound.get(signature) ?? 0,
       outbound: outbound.get(signature) ?? 0,
