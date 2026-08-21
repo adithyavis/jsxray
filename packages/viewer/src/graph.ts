@@ -1,6 +1,6 @@
 import type { JsxrayDocument, ScreenState } from '@jsxray/core';
 import type { Edge, Node } from '@xyflow/react';
-import { eyebrowOf, screenOf, titleOf, transitionOf } from './document.js';
+import { eyebrowOf, screenOf, sectionOf, titleOf } from './document.js';
 
 export type FrameKind = 'browser' | 'phone';
 
@@ -15,10 +15,15 @@ export interface ScreenNodeFields {
   personaId: string;
   title: string;
   eyebrow: string | null;
+  /** The eyebrow before it is shouted — what the flow list calls this screen. */
+  section: string | null;
   frame: FrameKind;
   state: ScreenState;
   inbound: number;
   outbound: number;
+  /** Of those, the ones the canvas draws — the rest are thinned by §14. */
+  inboundDrawn: number;
+  outboundDrawn: number;
 }
 
 export interface LaneNodeFields {
@@ -112,46 +117,67 @@ function buildLane(
     if (!bySignature.has(state.signature)) bySignature.set(state.signature, state);
   }
 
+  // §14 — a dialog is not a place, so an overlay state folds onto the screen it
+  // is drawn over. Folding rather than dropping keeps the lines that only exist
+  // because the crawl went through a dialog: `/messages$menu -> /messages/settings`
+  // is still the way to the settings screen. An overlay whose screen the crawl
+  // never saw bare has nothing to fold onto and stays, because dropping it would
+  // drop the only record of that screen.
+  const foldTo = new Map<string, string>();
+  for (const signature of bySignature.keys()) {
+    const page = pageSignature(signature);
+    foldTo.set(signature, bySignature.has(page) ? page : signature);
+  }
+  for (const [signature, page] of foldTo) {
+    if (page !== signature) bySignature.delete(signature);
+  }
+
   const runtimeEdges = document.edges.filter(
     (edge) =>
       edge.discoveredBy === 'runtime' &&
       edge.personaId === personaId &&
       edge.fromState &&
       edge.toState &&
-      bySignature.has(edge.fromState) &&
-      bySignature.has(edge.toState),
+      foldTo.has(edge.fromState) &&
+      foldTo.has(edge.toState),
   );
 
   const inbound = new Map<string, number>();
   const outbound = new Map<string, number>();
-  const captionByPair = new Map<string, string>();
+  const seen = new Set<string>();
   const order: string[] = [];
 
   for (const edge of runtimeEdges) {
-    const pair = `${edge.fromState}->${edge.toState}`;
-    outbound.set(edge.fromState!, (outbound.get(edge.fromState!) ?? 0) + 1);
-    inbound.set(edge.toState!, (inbound.get(edge.toState!) ?? 0) + 1);
-    if (captionByPair.has(pair)) continue;
+    const from = foldTo.get(edge.fromState!)!;
+    const to = foldTo.get(edge.toState!)!;
+    const pair = `${from}->${to}`;
+    // Opening and closing a dialog moves within one screen once the dialog is
+    // not a node of its own. It leaves and enters nothing, so it is neither an
+    // in nor an out — but it is still a real traversal, so it is still counted
+    // among the links not drawn.
+    if (from !== to) {
+      outbound.set(from, (outbound.get(from) ?? 0) + 1);
+      inbound.set(to, (inbound.get(to) ?? 0) + 1);
+    }
+    if (seen.has(pair)) continue;
+    seen.add(pair);
     order.push(pair);
-    // One line per pair, so it is named once — by the transition, not by every
-    // control that makes it (§14).
-    captionByPair.set(
-      pair,
-      transitionOf(bySignature.get(edge.fromState!)!, bySignature.get(edge.toState!)!, edge),
-    );
   }
 
   const hidden = findHiddenLinks(order, seedsOf(document, bySignature));
   const edges: Edge[] = [];
+  const inboundDrawn = new Map<string, number>();
+  const outboundDrawn = new Map<string, number>();
 
   for (const pair of order) {
     if (hidden.has(pair)) continue;
     const [source, target] = splitPair(pair);
+    outboundDrawn.set(source, (outboundDrawn.get(source) ?? 0) + 1);
+    inboundDrawn.set(target, (inboundDrawn.get(target) ?? 0) + 1);
     edges.push({
       id: `${personaId}::${pair}`,
       source: nodeId(personaId, source),
       target: nodeId(personaId, target),
-      label: captionByPair.get(pair)!,
       type: 'default',
       animated: false,
       markerEnd: {
@@ -164,10 +190,6 @@ function buildLane(
         strokeWidth: 1,
       } as Edge['markerEnd'],
       style: { stroke: '#7d8698', strokeWidth: 1.5 },
-      labelStyle: { fill: '#c8cfdb', fontSize: 11 },
-      labelBgStyle: { fill: '#161a22' },
-      labelBgPadding: [6, 3] as [number, number],
-      labelBgBorderRadius: 3,
     });
   }
 
@@ -179,10 +201,13 @@ function buildLane(
       personaId,
       title: titleOf(signature),
       eyebrow: eyebrowOf(screen, state.route),
+      section: sectionOf(screen, state.route),
       frame,
       state,
       inbound: inbound.get(signature) ?? 0,
       outbound: outbound.get(signature) ?? 0,
+      inboundDrawn: inboundDrawn.get(signature) ?? 0,
+      outboundDrawn: outboundDrawn.get(signature) ?? 0,
     };
     return {
       id: nodeId(personaId, signature),
@@ -195,6 +220,12 @@ function buildLane(
   });
 
   return { lane: { personaId, nodes, edges }, hiddenLinks: hidden.size };
+}
+
+/** §3.1 — a signature is `screenId$overlay…`; the screen is what is before the first `$`. */
+function pageSignature(signature: string): string {
+  const at = signature.indexOf('$');
+  return at === -1 ? signature : signature.slice(0, at);
 }
 
 function splitPair(pair: string): [string, string] {

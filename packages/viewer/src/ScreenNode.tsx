@@ -14,10 +14,11 @@ export function ScreenNode({ data, selected }: NodeProps): ReactElement {
   const node = data as ScreenNodeData;
   const size = FRAME_SIZE[node.frame];
   const capture = node.state.capture;
+  const loading = node.state.captureStatus === 'loading';
 
   return (
-    <div className="node" style={{ width: size.width }}>
-      {node.eyebrow ? <div className="node-eyebrow">{node.eyebrow}</div> : null}
+    <div className="node" style={{ width: size.width }} title={node.state.route}>
+      <div className="node-eyebrow">{node.eyebrow ?? ' '}</div>
 
       <div
         className={`frame frame-${node.frame}${selected ? ' frame-selected' : ''}`}
@@ -30,7 +31,7 @@ export function ScreenNode({ data, selected }: NodeProps): ReactElement {
         </div>
         <div className="frame-screen">
           {capture ? (
-            <img src={capture.path} alt={node.title} draggable={false} />
+            <img src={capture.path} alt={node.title} draggable={false} loading="lazy" />
           ) : (
             <div className="frame-empty">{EMPTY_REASON[node.state.captureStatus] ?? 'no capture'}</div>
           )}
@@ -39,13 +40,46 @@ export function ScreenNode({ data, selected }: NodeProps): ReactElement {
 
       <div className="node-title">{node.title}</div>
       <div className="node-caption">
-        {node.inbound} in · {node.outbound} out · {node.personaId}
+        <span className="degree" title={degreeHint(node.inbound, node.inboundDrawn, 'in')}>
+          <Arrow direction="in" />
+          {node.inbound}
+        </span>
+        <span className="degree" title={degreeHint(node.outbound, node.outboundDrawn, 'out')}>
+          <Arrow direction="out" />
+          {node.outbound}
+        </span>
+        <span className="node-persona">{node.personaId}</span>
         {/* §7.10 — a skeleton that is captured says so, rather than posing as the screen. */}
-        {node.state.captureStatus === 'loading' ? ' · still loading' : null}
+        {loading ? <span className="node-flag">still loading</span> : null}
       </div>
 
       <Handle type="target" position={Position.Left} />
       <Handle type="source" position={Position.Right} />
     </div>
+  );
+}
+
+/** The caption keeps the true count (§14), so the hint says how many are lines. */
+function degreeHint(total: number, drawn: number, direction: 'in' | 'out'): string {
+  const head = `${total} confirmed transitions ${direction}`;
+  return drawn === total ? head : `${head} — ${drawn} drawn, ${total - drawn} not`;
+}
+
+function Arrow({ direction }: { direction: 'in' | 'out' }): ReactElement {
+  return (
+    <svg viewBox="0 0 10 10" width="9" height="9" aria-hidden focusable="false">
+      <path
+        d={
+          direction === 'in'
+            ? 'M0.5 5h5.5M3.5 2.5 6 5 3.5 7.5M9 1.5v7'
+            : 'M1 1.5v7M3.5 5H9M6.5 2.5 9 5 6.5 7.5'
+        }
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }

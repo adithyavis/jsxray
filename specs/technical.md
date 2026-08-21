@@ -1151,11 +1151,22 @@ Vite + React + React Flow. Reads `window.__JSXRAY__` when inlined, otherwise fet
 `./jsxray.json`. Two build outputs from one source: `dist/` (served by `view`) and `dist-single/`
 (one self-contained file, for `--export`).
 
-**A node is a state, not a screen.** One `/settings` with two modals is three nodes, keyed by state
-signature (§3.1). This settles the question §7.7 and §3.1 left open from opposite ends: the graph
-is keyed by state, and a screen is what a group of states has in common, not a node. It follows
-from what an edge is — an edge is a traversed interaction, opening a modal *is* a traversed
-interaction, and an edge needs somewhere to land.
+**A node is a screen; a dialog is not a place.** The document is keyed by state (§3.1) and keeps
+every overlay the crawl found, but the canvas is a map of where the app can take the reader, and a
+modal over `/settings` is still `/settings`. One `/settings` with two modals is **one node**. Every
+overlay state folds onto the screen it is drawn over — the part of its signature before the first
+`$`.
+
+**Folding, not dropping.** A line through a dialog is rewritten to the screens at each end, not
+deleted with it. `/messages$menu -> /messages/settings` becomes `/messages -> /messages/settings`,
+because that is genuinely the way to the settings screen and often the only record of it. A line
+whose two ends fold to the same screen — open a dialog, close it again — goes nowhere and is not
+drawn. It is counted in *N other links not drawn*, and it is neither an in nor an out in the
+caption, because it leaves and enters nothing.
+
+An overlay whose screen the crawl never saw bare has nothing to fold onto and stays a node: it is
+the only record of that screen, and dropping it would drop the screen. On Bluesky this rule takes
+81 states down to 53 nodes, and what it removes is `$test` and `$hide-trending-topics`.
 
 **Node** — a device frame; phone for native targets, browser for web, reader-overridable. Frame
 geometry is fixed per device, so a capture and a not-yet-captured state occupy the same box and
@@ -1168,7 +1179,7 @@ presentation, not analysis:
 | Part | Rule |
 |---|---|
 | Eyebrow | first `meta.groups` entry — a Next route group is exactly this idea already, a grouping that never touches the URL — falling back to the parent path segment. Never the screen's own last segment, which would echo the title back as its own section. |
-| Title | canonical route, de-slugged and title-cased; a dynamic route becomes `<Words> Detail`; an entirely dynamic route (`/*slug`) is named after its parameter, which is what the author called it. `/` is `Home`. An overlay state is titled by its **last `$` segment** — the overlay's own accessible name, de-slugged — which is why §3.1 built identity from that name. |
+| Title | canonical route, de-slugged and title-cased; a dynamic route becomes `<Words> Detail`; an entirely dynamic route (`/*slug`) is named after its parameter, which is what the author called it. `/` is `Home`. An overlay state that has no screen to fold onto (above) is titled by its **last `$` segment** — the overlay's own accessible name, de-slugged. |
 | Caption | the interaction count in and out, and the capture's persona (its lane, §14). |
 
 **One persona, one lane.** The persona control filters to a single persona or shows them all, and
@@ -1183,32 +1194,76 @@ longer identifies a node. No edge ever crosses lanes, so each lane is laid out o
 otherwise one persona's screens pull another's into a shared row, which reads as a relationship
 that is not there. A single lane gets no header; the control already names it.
 
-**Chrome** — dark ground; a dot grid whose spacing is fixed in screen space, so it does not
-scale with zoom; a vertical brand rail; square zoom controls bottom-left.
+**Chrome** — a top bar over three columns: a flow list, the canvas, the inspector. Dark ground;
+a dot grid whose spacing is fixed in screen space, so it does not scale with zoom; a zoom bar
+bottom-left carrying the zoom as a number and a **Fit**.
+
+The top bar holds the brand, the persona control, and the frame control — both **segmented
+controls, not menus**, because each has a handful of values that are all worth seeing at once and
+the reader is switching between them rather than picking once. Coverage sits at the far end.
+
+**Flows.** A flow is the part of the app a screen belongs to: its first `meta.groups` entry,
+falling back to the nearest **non-parameter** parent segment, which is the same answer the node
+eyebrow gives — the sidebar and the canvas must not name the same screen two ways. A parameter is
+not a part of an app, so `/profile/:name/post/:rkey` is under `post`; a screen at the root of the
+app has no parent and is under **Top level**. Flows are ordered by where the crawl met them, and
+counted by nodes drawn, so the count is always the number of screens the canvas is showing.
+
+Opening a flow narrows the canvas to it and fits the view to those nodes. **A flow's screens are
+also listed by name under it**, because a flow's screens are scattered across the tree by
+construction and fitting to them often lands below the zoom where names are readable. Picking one
+by name arrives close enough to read.
+
+**Finding a screen.** A filter box heads the sidebar (`/` or `⌘K` to focus it, `Enter` for the
+next hit, `Shift+Enter` for the previous), matching a node's title, flow, route, and signature. It
+narrows the canvas and re-counts every flow at once. Filtering inside an open flow narrows within
+it; a filter that empties that flow falls back to the whole canvas, because dimming every node at
+once reads as a fault rather than as an answer. `Esc` clears the selection; `f` fits the map.
+
+**One thing at a time.** Selecting a screen lights the whole way in to it: the trail of screens
+back to the seed that reached it, and the screens one step on. Everything else drops back. One
+line in per screen makes the drawn lines a spanning tree, so that way in is unique — there is no
+choice to make about which path to show, and the trail is the same answer the inspector's
+*Reached by* gives in words.
+
+**The way in and the way on are two answers, so they are two colours** — the trail blue, the lines
+out green, and each lit screen bordered to match the line that reaches it. Dashes march along both
+from source to target, which is the direction the crawl travelled in either case. The colour is
+set on the line rather than in the stylesheet, because the arrowhead is a marker and has to be
+told the same thing.
+
+The trail is what a selection is asking about, so it stays lit through an open flow or a live
+filter. Those narrow which **screens** the canvas is showing, and while nothing is selected they
+decide the lines too; a selection takes the lines back. Selecting also brings the node to the
+middle of the canvas, because its neighbours are the point.
+
+**Words that cannot be read are not drawn.** Below **0.45** zoom a node's title, eyebrow, and
+caption and every edge label are hidden: at that size they are smaller than the dot grid and read
+as noise over the capture. The frames and the captures stay, which is what the far view is for.
+
+**Coverage is a proportion, so it is drawn as one.** Screens reached and edges confirmed each get
+their two numbers and a bar; links not drawn and unmatchable traversals get their own tallies,
+because a runtime edge that matches no declared link is a finding and not a shortfall.
 
 **Non-page screens** — route handlers and error states render no UI and are never crawled, so
 they have no capture and do not belong on the flow canvas. They are reachable from `--list` and
 from a separate listing in the viewer, not as nodes (product §11.2).
 
-**Edges** — runtime only (§5); curved, single-arrowed, and **named for the transition rather than
-for the words on the control**. One edge per pair even when several interactions share it, so the
-line is named once:
+**Edges** — runtime only (§5); curved, single-arrowed, and **unlabelled**. One edge per pair even
+when several interactions share it.
 
-| Transition | Label |
-|---|---|
-| the screen id changed | `Navigate to /profile/:name/feed/:rkey` — the destination's canonical route (§3) |
-| an overlay appeared | `Open the rename workspace dialog` — the overlay's own name, de-slugged, with its role as the noun (§3.1) |
-| an overlay went away | `Close the rename workspace dialog` |
-| a form submitted, nothing structural changed | `Submit <control>` |
-| anything else | the control's label, capped at 40 characters |
+A line was labelled once, and the labels were removed. Nothing that could be written on a line was
+worth the cost of writing it there. An accessible name is written to be read *in place*, next to
+the thing it acts on: "View this user's verifications" is a good button and, drawn on a line,
+longer than the node it points at and a statement of where the reader already is. Naming the line
+for its **destination** instead — `Navigate to /profile/:name/feed/:rkey` — says something true,
+but the destination is the node the line already points at, so the canvas ends up saying it twice
+and pays for the second time in clutter: on Bluesky a screen with nine ways out drew nine captions
+across the screens around it.
 
-An accessible name is written to be read *in place*, next to the thing it acts on: "View this
-user's verifications" is a good button and a bad edge label. Drawn on a line it is longer than the
-node it points at, and it says where the reader already is rather than where the line goes. The
-route says where the line goes, and it is the same string the node, the inspector, and `--list`
-use for that screen. The control's own words are a fact and are not lost — they stay on
-`edge.label` in the document, in the inspector's transition list, and in `--list`. Only the line
-is renamed, which is the same split as eyebrow, title, and caption above.
+So the line carries direction and nothing else, and every word about a traversal lives where there
+is room to read it: `edge.label` keeps the control's own words in the document, the inspector lists
+them against each destination, and `--list` prints them.
 
 **The roots are `config.seedRoutes`, and nothing else.** The breadth-first search that thins the
 lines starts there, because that is where the reader enters the app and where the run entered it.
@@ -1230,8 +1285,14 @@ screen already passed through, self-loops — is not drawn.
 
 This is a **presentation** rule, not an analysis one. Every traversal stays in `edges`, the
 inspector lists all confirmed transitions out of a state, and the node caption keeps the true in
-and out counts. Only the lines are thinned, and the toolbar reports how many were omitted, so a
-simplified picture never reads as a complete one (product §7.2).
+and out counts. Only the lines are thinned, so a simplified picture never reads as a complete one
+(product §7.2).
+
+**Every screen says how many of its own links became lines.** A true count of 14 beside five drawn
+lines reads as a contradiction until the screen says which five. The degree cards carry the count
+and the split under it — *5 drawn, 9 not* — and the node caption's hint says the same on hover.
+Per screen, not per graph: a toolbar total tells the reader that lines are missing somewhere, and
+never that these nine are missing here.
 
 Ties between equally short paths break on crawl order, which is why discovery order is
 load-bearing here and not only in `considerModelOrder`. The result is a spanning tree by
@@ -1275,11 +1336,23 @@ confirmed BFS traversals: the graph is near-tree by construction. A graph with e
 drawn — including the ones a nav bar produces out of every screen — is dense enough that no layout
 engine could oblige.
 
-**Inspector** — in v1: route facts, the steps that reached the state, outgoing confirmed
-transitions **for that state's own persona**, and which personas reached the same screen. The
-selected node belongs to one lane, so listing every persona's transitions out of it would put back
-the merge the canvas just took out. The component tree, props, and design-system origin
-(product §7.1, rows 2–3) arrive with the v2 component graph.
+**Inspector** — a fixed third column, so opening one never reflows the canvas. In v1, in this
+order: the capture (or, where there is none, a hatched panel naming the file and saying which of
+§7.8's reasons applies); the in and out degree as two cards, each naming how many of its links the
+canvas drew; **outgoing confirmed transitions for that state's own persona**, each named for where
+it goes and each a way to go there; route parameters; one caveat; then route facts, overlays, the
+steps that reached the state, and dead actions. The selected node belongs to one lane, so listing
+every persona's transitions out of it would put back the merge the canvas just took out.
+
+**One caveat, not a list of them.** A screen carries at most one warning, most load-bearing first:
+a screen that only some personas reached is gated, and where those personas agree on
+`authenticated` it is named *Signed-in only* or *Signed-out only*; otherwise, actions the crawl saw
+and never used (§7.5) say how completely the screen was read. A screen with nothing to warn about
+shows nothing.
+
+The component tree, props, and design-system origin (product §7.1, rows 2–3) arrive with the v2
+component graph; until `components[].props` is populated the inspector shows the route's own
+parameters in that slot rather than an empty section.
 
 **Typing note.** React Flow node data must be indexable. Keep the fields in their own interface and
 intersect with `Record<string, unknown>`: `keyof` an index-signature type is `string | number`, so
@@ -1338,7 +1411,7 @@ the smoke harness finds the ones we did not — every item in §17.2 came from i
 | **Kind ids admit unknown values** | `detect` must be able to name a stack it cannot analyze; in aggregate those diagnostics are the roadmap |
 | **Router discovery is a ranked list** | a generated route tree beats a file convention beats a parsed config, and which applies is a property of the repo |
 | **Canvas draws runtime edges only** | a declared link is a hypothesis, a traversal is a fact; the canvas shows facts |
-| **A node is a state, not a screen** | opening a modal is a traversed interaction, and an edge needs somewhere to land |
+| **A node is a screen; overlay states fold onto it** | a modal over `/settings` is still `/settings`, and on Bluesky the dialog nodes were 28 of 81 and nearly all noise. Folding rather than dropping keeps the line that leaves a dialog for a real screen |
 | **Tree layout, not stacked variants** | every state is a consequence of the one before it, so variants are siblings and one rule places every fan-out |
 | **An edge is named for the transition, not for the control** | an accessible name is written to be read next to the control; on a line it is longer than the node and names where the reader already is |
 | **Capture holds before the shutter** | `settle()` cannot tell a finished screen from a skeleton, and a grey approximation of the layout reads as a real screen |

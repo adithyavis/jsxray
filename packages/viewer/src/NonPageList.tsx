@@ -9,36 +9,34 @@ interface NonPageListProps {
 /** §14 — they render no UI and are never crawled, so they are not nodes. */
 export function NonPageList({ screens, onClose }: NonPageListProps): ReactElement {
   return (
-    <aside className="inspector">
-      <header>
-        <div>
+    <div className="panel">
+      <header className="panel-head">
+        <p className="eyebrow">Not on the canvas</p>
+        <div className="panel-title">
           <h2>Non-page screens</h2>
-          <code>{screens.length} declared</code>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close the list">
+            ×
+          </button>
         </div>
-        <button type="button" onClick={onClose} aria-label="Close list">
-          ×
-        </button>
+        <code className="route">{screens.length} declared</code>
       </header>
 
-      <section>
-        <p className="muted">
+      <div className="panel-body">
+        <p className="muted note">
           Route handlers and error states render no UI, so they have no capture and do not belong on
           the flow canvas.
         </p>
-        {screens.length ? (
-          <ul>
-            {screens.map((screen) => (
-              <li key={screen.id}>
-                <code>{screen.id}</code>
-                <span className="muted"> {screen.kind}</span>
-                {screen.file ? <div className="muted">{screen.file}</div> : null}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="muted">none</p>
-        )}
-      </section>
-    </aside>
+        <ul className="rows">
+          {screens.map((screen) => (
+            <li key={screen.id} className="row row-stack">
+              <span className="row-main">
+                <code>{screen.id}</code> <code className="row-kind">{screen.kind}</code>
+              </span>
+              {screen.file ? <span className="row-note wrap-any">{screen.file}</span> : null}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
   );
 }
