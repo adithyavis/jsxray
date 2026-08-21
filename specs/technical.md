@@ -1151,11 +1151,22 @@ Vite + React + React Flow. Reads `window.__JSXRAY__` when inlined, otherwise fet
 `./jsxray.json`. Two build outputs from one source: `dist/` (served by `view`) and `dist-single/`
 (one self-contained file, for `--export`).
 
-**A node is a state, not a screen.** One `/settings` with two modals is three nodes, keyed by state
-signature (§3.1). This settles the question §7.7 and §3.1 left open from opposite ends: the graph
-is keyed by state, and a screen is what a group of states has in common, not a node. It follows
-from what an edge is — an edge is a traversed interaction, opening a modal *is* a traversed
-interaction, and an edge needs somewhere to land.
+**A node is a screen; a dialog is not a place.** The document is keyed by state (§3.1) and keeps
+every overlay the crawl found, but the canvas is a map of where the app can take the reader, and a
+modal over `/settings` is still `/settings`. One `/settings` with two modals is **one node**. Every
+overlay state folds onto the screen it is drawn over — the part of its signature before the first
+`$`.
+
+**Folding, not dropping.** A line through a dialog is rewritten to the screens at each end, not
+deleted with it. `/messages$menu -> /messages/settings` becomes `/messages -> /messages/settings`,
+because that is genuinely the way to the settings screen and often the only record of it. A line
+whose two ends fold to the same screen — open a dialog, close it again — goes nowhere and is not
+drawn. It is counted in *N other links not drawn*, and it is neither an in nor an out in the
+caption, because it leaves and enters nothing.
+
+An overlay whose screen the crawl never saw bare has nothing to fold onto and stays a node: it is
+the only record of that screen, and dropping it would drop the screen. On Bluesky this rule takes
+81 states down to 53 nodes, and what it removes is `$test` and `$hide-trending-topics`.
 
 **Node** — a device frame; phone for native targets, browser for web, reader-overridable. Frame
 geometry is fixed per device, so a capture and a not-yet-captured state occupy the same box and
@@ -1168,7 +1179,7 @@ presentation, not analysis:
 | Part | Rule |
 |---|---|
 | Eyebrow | first `meta.groups` entry — a Next route group is exactly this idea already, a grouping that never touches the URL — falling back to the parent path segment. Never the screen's own last segment, which would echo the title back as its own section. |
-| Title | canonical route, de-slugged and title-cased; a dynamic route becomes `<Words> Detail`; an entirely dynamic route (`/*slug`) is named after its parameter, which is what the author called it. `/` is `Home`. An overlay state is titled by its **last `$` segment** — the overlay's own accessible name, de-slugged — which is why §3.1 built identity from that name. |
+| Title | canonical route, de-slugged and title-cased; a dynamic route becomes `<Words> Detail`; an entirely dynamic route (`/*slug`) is named after its parameter, which is what the author called it. `/` is `Home`. An overlay state that has no screen to fold onto (above) is titled by its **last `$` segment** — the overlay's own accessible name, de-slugged. |
 | Caption | the interaction count in and out, and the capture's persona (its lane, §14). |
 
 **One persona, one lane.** The persona control filters to a single persona or shows them all, and
@@ -1400,7 +1411,7 @@ the smoke harness finds the ones we did not — every item in §17.2 came from i
 | **Kind ids admit unknown values** | `detect` must be able to name a stack it cannot analyze; in aggregate those diagnostics are the roadmap |
 | **Router discovery is a ranked list** | a generated route tree beats a file convention beats a parsed config, and which applies is a property of the repo |
 | **Canvas draws runtime edges only** | a declared link is a hypothesis, a traversal is a fact; the canvas shows facts |
-| **A node is a state, not a screen** | opening a modal is a traversed interaction, and an edge needs somewhere to land |
+| **A node is a screen; overlay states fold onto it** | a modal over `/settings` is still `/settings`, and on Bluesky the dialog nodes were 28 of 81 and nearly all noise. Folding rather than dropping keeps the line that leaves a dialog for a real screen |
 | **Tree layout, not stacked variants** | every state is a consequence of the one before it, so variants are siblings and one rule places every fan-out |
 | **An edge is named for the transition, not for the control** | an accessible name is written to be read next to the control; on a line it is longer than the node and names where the reader already is |
 | **Capture holds before the shutter** | `settle()` cannot tell a finished screen from a skeleton, and a grey approximation of the layout reads as a real screen |
